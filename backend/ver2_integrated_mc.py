@@ -204,11 +204,12 @@ def simulate_once(race:RaceInput, rng:random.Random):
     return outcome
 
 def run_mc(race:RaceInput,n:int,seed:int):
-    rng=random.Random(seed); decisive=Counter(); boat_dec=Counter(); top=Counter(); slits=Counter(); back=Counter(); notes=Counter()
+    rng=random.Random(seed); decisive=Counter(); boat_dec=Counter(); top=Counter(); slits=Counter(); back=Counter(); notes=Counter(); attack_pattern=Counter()
     reps=[]
     for _ in range(n):
         o=simulate_once(race,rng); slit=tuple(o['courses'][b] for b in BOATS); slits[slit]+=1
         if o['decisive']: decisive[o['decisive']]+=1; boat_dec[(o['decisive_boat'],o['decisive'])]+=1
+        for b,m in o['intent'].items(): attack_pattern[(b,m)]+=1
         for rank,b in enumerate(o['back_order'][:3],1): top[(b,rank)]+=1
         bo=tuple(o['back_order']); back[bo]+=1
         for x in o['entry_notes']: notes[x]+=1
@@ -221,6 +222,7 @@ def run_mc(race:RaceInput,n:int,seed:int):
       'decisive_by_boat':{f'{b}_{m}':v/n for (b,m),v in boat_dec.items()},
       'top3_rate':{str(b):sum(top[(b,r)] for r in (1,2,3))/n for b in BOATS},
       'rank_rates':{str(b):{str(r):top[(b,r)]/n for r in (1,2,3)} for b in BOATS},
+      'attack_pattern_rate':{str(b):{m:v/n for (bb,m),v in attack_pattern.items() if bb==b} for b in BOATS},
       'representative_back_middle':list(back.most_common(1)[0][0]),
       'representative_back_middle_rate':back.most_common(1)[0][1]/n,
       'fronting_effect_events':dict(notes),
