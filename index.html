@@ -5,10 +5,10 @@
 <section class="panel livePanel"><div class="sectionHead"><h2>実戦モード</h2><span class="liveTag">OFFICIAL DATA</span></div>
 <div class="grid controls"><label>日付<input id="liveDate" value="20260904" inputmode="numeric" maxlength="8"></label><label>浜名湖R<select id="liveRace"><option value="1">1R</option><option value="2">2R</option><option value="3">3R</option><option value="4">4R</option><option value="5">5R</option><option value="6">6R</option><option value="7">7R</option><option value="8">8R</option><option value="9">9R</option><option value="10">10R</option><option value="11">11R</option><option value="12">12R</option></select></label></div>
 <div class="actions"><button id="livePrepare">① 公式データを取得</button><button id="liveSim" class="secondary" disabled>③ 実戦10,000回</button><span id="liveMsg"></span></div><div id="liveStatus" class="liveStatus">未取得</div><div id="liveBoats" class="liveBoats"></div></section>
-<section class="panel"><h2>② 前付け</h2><p class="hint">入力するのは「前付けする艇番」だけ。前付け成功・失敗は10,000回の中で毎回ランダムに再現します。</p><div class="grid controls"><label>前付け艇<select id="boat"><option value="0">なし</option><option value="3">3号艇</option><option value="4">4号艇</option><option value="5">5号艇</option><option value="6">6号艇</option></select></label></div></section>
+<section class="panel"><h2>② 前付け・進入想定</h2><p class="hint">6つの枠に「1Mへ向かう進入順」を指定。選手名も表示します。指定した進入は10,000回の中で毎回、成立・不成立をランダムに再現します。</p><div id="entryOrder" class="entryOrder"></div><div class="entryActions"><button id="resetEntry" class="secondary">通常進入に戻す</button></div></section>
 <section class="panel"><div class="sectionHead"><h2>最頻スリット</h2><span id="simBadge">10,000 samples</span></div><div id="summary" class="cards"></div></section>
 <section class="panel"><h2>各艇の1M攻撃パターン</h2><p class="hint">10,000回の1M攻撃意図を艇別に集計。特殊条件ではなく、通常の展開の中で「どの攻めになりやすいか」を表示します。</p><div id="methods" class="boatMethods"></div></section>
-<section class="panel"><h2>バックストレッチ到着率</h2><p class="hint">1〜3着に入る率を、浜名湖の参考基準と並べて表示します。</p><div id="bars"></div></section>
-<section class="panel"><h2>1M〜バックの代表展開</h2><div id="development" class="development"></div></section>
+<section class="panel"><h2>バックストレッチ到着率</h2><p class="hint">バック中間で各艇が1〜3番手に入った割合です。最終着順ではありません。</p><div id="bars"></div></section>
+<section class="panel"><div class="sectionHead"><h2>バックストレッチ展開図</h2><span id="backBadge">シミュレーション結果</span></div><p class="hint">10,000回シミュレーションの代表バック隊形を、進行方向を左にして簡単な2D図で表示します。</p><div id="backDiagram" class="backDiagram"></div></section>
 <section class="notice"><b>重要：</b>現在は実レース校正前の構造統合版です。数値は実戦確率を保証しません。浜名湖平均との差も、校正済みの基準としてではなく参考値として表示します。</section>
 </main><footer>浜名湖1M 展開予想AI Ver.2 / 買い目ではなく展開の再現を提示します。</footer><script src="app.js"></script></body></html>
