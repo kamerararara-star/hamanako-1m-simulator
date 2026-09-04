@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: hamanako-ver2-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: CORS_ORIGINS
+        value: "*"
