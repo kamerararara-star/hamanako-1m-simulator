@@ -32,6 +32,7 @@ class RaceInput:
     base_entry:List[int]=None
     slow_dash:str='auto'
     fronting:List[Fronting]=None
+    entry_order:List[int]=None
 
 
 def clamp(x,a=0.0,b=1.0): return max(a,min(b,x))
@@ -55,6 +56,24 @@ def resolve_entry(race:RaceInput, rng:random.Random):
     courses={b:base[b-1] for b in BOATS}
     fronting=sorted(race.fronting or [], key=lambda f:f.boat_no)
     notes=[]
+    # User-specified full entry order: each simulation independently decides whether
+    # the intended fronting/entry order succeeds. On failure, use the normal order.
+    requested=race.entry_order or []
+    if requested and sorted(requested)==list(BOATS):
+        changed=any(requested[i]!=base[i] for i in range(6))
+        if changed:
+            # A manually changed full formation is a strong user hypothesis.
+            # Keep it stochastic, but prioritize the requested shape; the
+            # remaining probability represents resistance / non-entry on the day.
+            success_prob=0.85
+            if rng.random() < success_prob:
+                courses={b:i+1 for i,b in enumerate(requested)}
+                notes.append('指定進入成立')
+            else:
+                courses={b:base[b-1] for b in BOATS}
+                notes.append('指定進入不成立→通常進入')
+            entry_pos={b:(courses[b]-1)*1.0 for b in BOATS}
+            return courses, entry_pos, notes
     for f in fronting:
         if f.strength<=0: continue
         tr=translate_fronting(f); b=f.boat_no; target=f.target_course
@@ -205,13 +224,21 @@ def simulate_once(race:RaceInput, rng:random.Random):
 
 def run_mc(race:RaceInput,n:int,seed:int):
     rng=random.Random(seed); decisive=Counter(); boat_dec=Counter(); top=Counter(); slits=Counter(); back=Counter(); notes=Counter(); attack_pattern=Counter()
+    back_time_sum=defaultdict(float); back_time_sq=defaultdict(float); back_gap_sum=defaultdict(float); st_sum=defaultdict(float)
     reps=[]
     for _ in range(n):
         o=simulate_once(race,rng); slit=tuple(o['courses'][b] for b in BOATS); slits[slit]+=1
         if o['decisive']: decisive[o['decisive']]+=1; boat_dec[(o['decisive_boat'],o['decisive'])]+=1
         for b,m in o['intent'].items(): attack_pattern[(b,m)]+=1
+        for b in BOATS: st_sum[b]+=o['st'][b]
         for rank,b in enumerate(o['back_order'][:3],1): top[(b,rank)]+=1
         bo=tuple(o['back_order']); back[bo]+=1
+        # Relative back-reference arrival time derived from each simulation's 1M-exit state.
+        # This is a model-estimated time, not a measured race/video time.
+        raw={b:8.60 - 0.22*o['exit_long'][b] + rng.gauss(0,0.018) for b in BOATS}
+        lead_t=min(raw.values())
+        for b in BOATS:
+            back_time_sum[b]+=raw[b]; back_time_sq[b]+=raw[b]*raw[b]; back_gap_sum[b]+=(raw[b]-lead_t)
         for x in o['entry_notes']: notes[x]+=1
         if len(reps)<3: reps.append(o)
     rep_slit,count=slits.most_common(1)[0]
@@ -222,9 +249,15 @@ def run_mc(race:RaceInput,n:int,seed:int):
       'decisive_by_boat':{f'{b}_{m}':v/n for (b,m),v in boat_dec.items()},
       'top3_rate':{str(b):sum(top[(b,r)] for r in (1,2,3))/n for b in BOATS},
       'rank_rates':{str(b):{str(r):top[(b,r)]/n for r in (1,2,3)} for b in BOATS},
+      'predicted_st':{str(b):st_sum[b]/n for b in BOATS},
       'attack_pattern_rate':{str(b):{m:v/n for (bb,m),v in attack_pattern.items() if bb==b} for b in BOATS},
       'representative_back_middle':list(back.most_common(1)[0][0]),
       'representative_back_middle_rate':back.most_common(1)[0][1]/n,
+      'back_timing':{str(b):{
+          'mean_sec':back_time_sum[b]/n,
+          'gap_to_leader_sec':back_gap_sum[b]/n,
+          'sd_sec':max(0.0,(back_time_sq[b]/n-(back_time_sum[b]/n)**2))**0.5
+        } for b in BOATS},
       'fronting_effect_events':dict(notes),
     }
 
@@ -232,7 +265,7 @@ def load_race(path):
     d=json.load(open(path,encoding='utf-8'))
     boats=[BoatInput(**x) for x in d['boats']]
     fs=[Fronting(**x) for x in d.get('fronting',[])]
-    return RaceInput(boats=boats,wind=d.get('wind',0),wave=d.get('wave',0),base_entry=d.get('base_entry'),slow_dash=d.get('slow_dash','auto'),fronting=fs)
+    return RaceInput(boats=boats,wind=d.get('wind',0),wave=d.get('wave',0),base_entry=d.get('base_entry'),slow_dash=d.get('slow_dash','auto'),fronting=fs,entry_order=d.get('entry_order'))
 
 def compare(race:RaceInput, conditions:Dict[str,List[Fronting]], n:int, seed:int):
     out={}
