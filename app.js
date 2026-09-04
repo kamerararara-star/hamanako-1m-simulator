@@ -27,20 +27,44 @@ function fronting(){
   if(!changed) return [];
   return entryOrder.filter((b,i)=>b!==i+1).map(b=>({boat_no:b,strength:70,start_aggression:65,depth:60,give_up:35,target_course:null}));
 }
-function render(r){const slit=r.representative_start_slit||r.repSlit||[];const rate=(r.representative_start_slit_rate??r.repRate??0)*100;const back=r.representative_back_middle||r.back||[];const br=(r.representative_back_middle_rate??r.backRate??0)*100;$('summary').innerHTML=`<div class="card wide"><div class="label">最頻スリット</div><div class="slit">${slit.map(x=>`<b>${x}</b>`).join(' → ')}</div><div class="sub">出現率 ${rate.toFixed(1)}%</div></div><div class="card"><div class="label">予想ST</div><div class="value">${slit.map((_,i)=>'.'+String(14+i).padStart(2,'0')).join(' / ')}</div><div class="sub">STは平均STだけでなく、進入・展示・反応・条件を合わせて推定</div></div>`;
-const ar=r.attack_pattern_rate||{};$('methods').innerHTML=boats.map(b=>{const entries=Object.entries(ar[String(b)]||ar[b]||{}).sort((a,c)=>c[1]-a[1]);const best=entries[0]||['—',0];const second=entries[1]||['',0];return `<div class="boatMethod"><div class="boatNo">${b}</div><div><b>${best[0]}</b> <strong>${(best[1]*100).toFixed(1)}%</strong>${second[0]?`<span class="sub"> / ${second[0]} ${(second[1]*100).toFixed(1)}%</span>`:''}</div></div>`}).join('');
-const rr=r.rank_rates||{};$('bars').innerHTML=boats.map(b=>{const x=rr[String(b)]||rr[b]||{};const one=(x['1']||0)*100,two=(x['2']||0)*100,three=(x['3']||0)*100,total=one+two+three;const base=HAMANA_BACK[b],baseTotal=base.reduce((a,v)=>a+v,0),diff=total-baseTotal,arr=diff>=3?'↑🔥':diff>=0.5?'↑':diff<=-3?'↓':diff<=-0.5?'↓':'→';return `<div class="barBox"><div class="barTop"><span><b>${b}号艇</b>　バック1番手 ${one.toFixed(1)}% / バック2番手 ${two.toFixed(1)}% / バック3番手 ${three.toFixed(1)}%</span><b>${total.toFixed(1)}%</b></div><div class="track"><div class="fill" style="width:${Math.min(100,total)}%"></div></div><div class="compareLine">浜名湖参考 ${baseTotal.toFixed(1)}%　<span>${diff>=0?'+':''}${diff.toFixed(1)}pt ${arr}</span></div></div>`}).join('');
-const backBox=$('backDiagram');
-if(backBox){
-  const seq=back.length?back:boats;
-  const width=760,height=300,left=70,right=700,top=55,bottom=250;
-  const laneY={1:220,2:190,3:160,4:130,5:100,6:70};
-  const usable=right-left;
-  const points=seq.map((b,i)=>({b,x:left+(seq.length===1?usable/2:(usable*i/(seq.length-1))),y:laneY[b]||160}));
-  const circles=points.map((p,i)=>`<g><circle cx="${p.x}" cy="${p.y}" r="22" class="boatDot boat${p.b}"/><text x="${p.x}" y="${p.y+6}" text-anchor="middle" class="boatText">${p.b}</text><text x="${p.x}" y="${p.y-30}" text-anchor="middle" class="boatTime">${i+1}番手</text></g>`).join('');
-  const lines=points.length>1?points.slice(0,-1).map((p,i)=>`<line x1="${p.x+24}" y1="${p.y}" x2="${points[i+1].x-24}" y2="${points[i+1].y}" class="routeLine"/>`).join(''):'';
-  backBox.innerHTML=`<div class="diagramWrap"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="バックストレッチ代表隊形"><defs><marker id="arrowLeft" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" class="arrowHead"/></marker></defs><rect x="45" y="35" width="690" height="225" rx="16" class="waterBox"/><text x="70" y="55" class="axisLabel">外側</text><text x="70" y="245" class="axisLabel">内側</text><line x1="690" y1="270" x2="120" y2="270" class="progressLine" marker-end="url(#arrowLeft)"/><text x="405" y="292" text-anchor="middle" class="axisLabel">進行方向 ←</text>${lines}${circles}</svg></div><div class="diagramInfo"><b>代表バック隊形：${seq.join('-')}</b><span>出現率 ${br.toFixed(1)}%</span></div>`;
-}}
+function render(r){
+  const slit=r.representative_start_slit||r.repSlit||[];
+  const rate=(r.representative_start_slit_rate??r.repRate??0)*100;
+  const back=r.representative_back_middle||r.back||[];
+  const br=(r.representative_back_middle_rate??r.backRate??0)*100;
+  const names=b=>getBoatLabel(b);
+  const st=r.predicted_st||{};
+  $('summary').innerHTML=`<div class="card wide"><div class="label">最頻スリット</div><div class="slit">${slit.map(x=>`<b>${x}</b>`).join(' → ')}</div><div class="sub">出現率 ${rate.toFixed(1)}%</div></div><div class="card"><div class="label">予想ST</div><div class="value stGrid">${boats.map(b=>`<span><b>${b}号艇</b> ${st[String(b)]!=null?st[String(b)].toFixed(3):'—'}</span>`).join('')}</div><div class="sub">10,000回のシミュレーションから算出した平均ST（推定）</div></div>`;
+
+  const ar=r.attack_pattern_rate||{};
+  $('methods').innerHTML=boats.map(b=>{
+    const entries=Object.entries(ar[String(b)]||ar[b]||{}).sort((a,c)=>c[1]-a[1]);
+    return `<div class="methodCard"><div class="boatIdentity"><span class="boatBadge boat${b}">${b}</span><div><b>${names(b)}</b><small>${(liveRaceData?.boats||[]).find(x=>+x.boat_no===b)?.racer_class||''}</small></div></div><div class="patternList">${entries.map(([k,v],i)=>`<span class="pattern ${i===0?'main':''}">${k} <b>${(v*100).toFixed(1)}%</b></span>`).join('')}</div></div>`;
+  }).join('');
+
+  const rr=r.rank_rates||{};
+  $('bars').innerHTML=boats.map(b=>{
+    const x=rr[String(b)]||rr[b]||{}; const one=(x['1']||0)*100,two=(x['2']||0)*100,three=(x['3']||0)*100,total=one+two+three;
+    const base=HAMANA_BACK[b],baseTotal=base.reduce((a,v)=>a+v,0),diff=total-baseTotal,arr=diff>=3?'↑🔥':diff>=0.5?'↑':diff<=-3?'↓':diff<=-0.5?'↓':'→';
+    return `<div class="backRateCard"><div class="backRateHead"><div class="boatIdentity"><span class="boatBadge boat${b}">${b}</span><div><b>${names(b)}</b><small>バック中間</small></div></div><strong>${total.toFixed(1)}%</strong></div><div class="rateGrid"><div><span>1番手</span><b>${one.toFixed(1)}%</b></div><div><span>2番手</span><b>${two.toFixed(1)}%</b></div><div><span>3番手</span><b>${three.toFixed(1)}%</b></div></div><div class="track"><div class="fill" style="width:${Math.min(100,total)}%"></div></div><div class="compareLine">浜名湖参考 ${baseTotal.toFixed(1)}%　<span>${diff>=0?'+':''}${diff.toFixed(1)}pt ${arr}</span></div></div>`;
+  }).join('');
+
+  const timing=r.back_timing||{};
+  const order=back.length?back:boats;
+  const xs=[540,455,370,285,200,115];
+  const yMap={1:92,2:126,3:160,4:194,5:228,6:262};
+  const tvals=boats.map(b=>timing[String(b)]?.mean_sec).filter(v=>typeof v==='number');
+  const minT=tvals.length?Math.min(...tvals):null;
+  const maxT=tvals.length?Math.max(...tvals):null;
+  const xFor=b=>{
+    const t=timing[String(b)]?.mean_sec;
+    if(t==null||minT==null||maxT===minT) return 330;
+    return 540-((t-minT)/(maxT-minT))*425;
+  };
+  const points=order.map((b,i)=>{const x=xFor(b), y=yMap[b]??(90+i*34); const tt=timing[String(b)]; const gap=tt?tt.gap_to_leader_sec:0; return `<g><circle class="boatDot boat${b}" cx="${x.toFixed(1)}" cy="${y}" r="18"/><text class="boatText" x="${x.toFixed(1)}" y="${y+6}" text-anchor="middle">${b}</text><text class="boatTime" x="${x.toFixed(1)}" y="${y-25}" text-anchor="middle">${tt?tt.mean_sec.toFixed(2)+'s':'—'}</text><text class="boatGap" x="${x.toFixed(1)}" y="${y+34}" text-anchor="middle">${tt?'+'+gap.toFixed(2)+'s':''}</text></g>`}).join('');
+  $('backDiagram').innerHTML=`<div class="backDiagram"><div class="diagramWrap"><svg viewBox="0 0 620 330" role="img" aria-label="バックストレッチ展開図"><rect class="waterBox" x="20" y="38" width="580" height="240" rx="14"/><text class="axisLabel" x="590" y="25" text-anchor="end">進行方向 ←</text><text class="axisLabel" x="30" y="58">外側</text><text class="axisLabel" x="30" y="270">内側</text><line class="progressLine" x1="565" y1="300" x2="70" y2="300"/><path class="arrowHead" d="M70 300 l14 -7 v14 z"/>${[92,126,160,194,228,262].map(y=>`<line class="routeLine" x1="55" y1="${y}" x2="570" y2="${y}"/>`).join('')}${points}</svg><div class="diagramInfo"><span>代表バック隊形 <b>${order.join(' → ')}</b></span><span>発生率 <b>${br.toFixed(1)}%</b></span></div><div class="diagramLegend">※時間はシミュレーション上のバック基準点への推定到達時間。先頭との差を併記。</div></div></div>`;
+  $('backBadge').textContent=`代表 ${order.join('-')} / ${br.toFixed(1)}%`;
+}
 async function run(){const n=10000;$('liveSim').disabled=true;$('liveMsg').textContent='実戦MC計算中…';try{let r;if(liveRaceData){const res=await fetch(API+'/live/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race:liveRaceData,simulations:n,seed:Date.now()%2147483647,fronting:fronting(),entry_order:entryOrder})});if(!res.ok)throw new Error(await res.text());const x=await res.json();r=x.result||x;}else{const race={race_id:'web-demo',boats:boats.map(b=>({boat_no:b,exhibition_st:.15,stretch:0,accel:0,turn:0,pressure_resistance:0,attack:0,defend:0,psychology:0,start_quality:0})),wind:.2,wave:.1,base_entry:[1,2,3,4,5,6]};const res=await fetch(API+'/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race,simulations:n,seed:Date.now()%2147483647,fronting:fronting(),entry_order:entryOrder})});if(!res.ok)throw new Error(await res.text());r=await res.json();}render(r);$('simBadge').textContent='10,000 samples';$('liveMsg').textContent='実戦シミュレーション完了';}catch(e){render(localSim(n,0,Date.now()));$('liveMsg').textContent='API接続失敗のためローカル再計算';}}
 async function livePrepare(){const date=$('liveDate').value.trim(),race=+$('liveRace').value;$('liveMsg').textContent='公式データ取得中…';try{const res=await fetch(`${API}/live/prepare?date=${date}&race_no=${race}`);if(!res.ok)throw new Error(await res.text());liveRaceData=await res.json();const ok=liveRaceData.status==='ready_for_simulation';$('liveStatus').textContent=(liveRaceData.event_name||'浜名湖')+' / '+race+'R / '+(ok?'取得OK':'要確認');$('liveBoats').innerHTML=(liveRaceData.boats||[]).map(b=>`<div class="liveBoat"><b>${b.boat_no}号艇</b> ${b.racer_name||'—'} <span>${b.racer_class||''}</span><small>展示ST ${b.exhibition_st??'未取得'} / 展示 ${b.exhibition_time??'未取得'} / モーター ${b.motor_no??'—'}</small></div>`).join('')||'<div>艇データなし</div>';renderEntryOrder();$('liveSim').disabled=!ok;$('liveMsg').textContent=ok?'取得完了':'取得は完了しましたが、シミュレーション条件を確認してください';}catch(e){liveRaceData=null;$('liveSim').disabled=true;$('liveMsg').textContent='取得失敗: '+e.message;}}
 $('resetEntry').addEventListener('click',resetEntry);

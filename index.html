@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b1220"><title>浜名湖1M 展開予想AI Ver.2</title><link rel="stylesheet" href="style.css"></head>
-<body><header><div><span class="eyebrow">BOAT RACE / HAMANAKO 1M</span><h1>展開予想AI <b>Ver.2</b></h1><p>公式データ → 前付け枠番 → 10,000回 → 1M展開</p></div><span class="status">STRUCTURE READY</span></header>
+<body><header><div><span class="eyebrow">BOAT RACE / HAMANAKO 1M</span><h1>展開予想AI <b>Ver.2</b></h1><p>公式データ → 進入想定 → 10,000回 → 1M攻防 → バック中間</p></div><span class="status">STRUCTURE READY</span></header>
 <main>
 <section class="panel livePanel"><div class="sectionHead"><h2>実戦モード</h2><span class="liveTag">OFFICIAL DATA</span></div>
 <div class="grid controls"><label>日付<input id="liveDate" value="20260904" inputmode="numeric" maxlength="8"></label><label>浜名湖R<select id="liveRace"><option value="1">1R</option><option value="2">2R</option><option value="3">3R</option><option value="4">4R</option><option value="5">5R</option><option value="6">6R</option><option value="7">7R</option><option value="8">8R</option><option value="9">9R</option><option value="10">10R</option><option value="11">11R</option><option value="12">12R</option></select></label></div>
@@ -9,6 +9,6 @@
 <section class="panel"><div class="sectionHead"><h2>最頻スリット</h2><span id="simBadge">10,000 samples</span></div><div id="summary" class="cards"></div></section>
 <section class="panel"><h2>各艇の1M攻撃パターン</h2><p class="hint">10,000回の1M攻撃意図を艇別に集計。特殊条件ではなく、通常の展開の中で「どの攻めになりやすいか」を表示します。</p><div id="methods" class="boatMethods"></div></section>
 <section class="panel"><h2>バックストレッチ到着率</h2><p class="hint">バック中間で各艇が1〜3番手に入った割合です。最終着順ではありません。</p><div id="bars"></div></section>
-<section class="panel"><div class="sectionHead"><h2>バックストレッチ展開図</h2><span id="backBadge">シミュレーション結果</span></div><p class="hint">10,000回シミュレーションの代表バック隊形を、進行方向を左にして簡単な2D図で表示します。</p><div id="backDiagram" class="backDiagram"></div></section>
+<section class="panel"><div class="sectionHead"><h2>バックストレッチ展開図</h2><span id="backBadge">シミュレーション結果</span></div><p class="hint">10,000回シミュレーションの代表バック隊形を、進行方向を左にして2Dで表示。各艇の推定通過時間と先頭との差も表示します。</p><div id="backDiagram" class="backDiagram"></div></section>
 <section class="notice"><b>重要：</b>現在は実レース校正前の構造統合版です。数値は実戦確率を保証しません。浜名湖平均との差も、校正済みの基準としてではなく参考値として表示します。</section>
 </main><footer>浜名湖1M 展開予想AI Ver.2 / 買い目ではなく展開の再現を提示します。</footer><script src="app.js"></script></body></html>
