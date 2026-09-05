@@ -234,9 +234,12 @@ def build_race(date, race_no, fetch_before=True, fetch_result=False):
         try:
             result['result']=parse_result(fetch(urls['result']))
         except Exception as e: result['errors'].append({'stage':'result','error':str(e)})
-    required_names=len(result['boats'])==6 and all(b.get('racer_name') for b in result['boats'])
-    required_before=all(b.get('exhibition_time') is not None and b.get('exhibition_st') is not None for b in result['boats']) if result['boats'] else False
-    result['status']='ready_for_simulation' if required_names and required_before else ('needs_exhibition' if required_names else 'incomplete')
+    # Names/motor statistics are display/enrichment fields.  The simulator only
+    # requires all six boats plus exhibition time/ST; missing enrichment must not
+    # disable the 10,000-run MC.
+    six_boats=len(result['boats'])==6 and sorted(int(b.get('boat_no',0)) for b in result['boats'])==[1,2,3,4,5,6]
+    required_before=six_boats and all(b.get('exhibition_time') is not None and b.get('exhibition_st') is not None for b in result['boats'])
+    result['status']='ready_for_simulation' if required_before else ('needs_exhibition' if six_boats else 'incomplete')
     return result
 
 def main():
