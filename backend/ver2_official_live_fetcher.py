@@ -6,7 +6,7 @@ If a page cannot be fetched or parsed, the result remains incomplete rather than
 being guessed.
 """
 from __future__ import annotations
-import re, json, argparse
+import re, json, argparse, unicodedata
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -40,61 +40,96 @@ def cell_texts(html):
     soup=BeautifulSoup(html,'html.parser')
     return [[c.get_text(' ',strip=True) for c in row.find_all(['th','td'])] for row in soup.find_all('tr')]
 
+def _norm(s):
+    return unicodedata.normalize('NFKC', str(s or '')).replace('\u3000',' ').strip()
+
+def _extract_roster_row(cells, fallback_boat=None):
+    texts=[_norm(c) for c in cells]
+    alltext=' '.join(texts)
+    boat_no=fallback_boat
+    # Official HTML normally puts the frame number in the first cell.  Some
+    # variants render it as a full-width digit or wrap it in an image/span.
+    for txt in texts[:5]:
+        m=re.match(r'^\s*([1-6])(?:\D|$)',txt)
+        if m:
+            boat_no=int(m.group(1)); break
+    if boat_no is None:
+        for txt in texts[:5]:
+            m=re.search(r'(?:^|\s)([1-6])(?:号艇|枠|コース)(?:\s|$)',txt)
+            if m:
+                boat_no=int(m.group(1)); break
+    if boat_no is None:
+        return None
+
+    cls=None; class_idx=-1
+    for i,txt in enumerate(texts):
+        mc=re.search(r'\b([ABC][123])\b',txt)
+        if mc:
+            cls=mc.group(1); class_idx=i; break
+
+    name=None
+    jp=re.compile(r'[一-龥々ぁ-んァ-ヶー]{2,}')
+    candidates=[]
+    for i,txt in enumerate(texts):
+        if i == 0: continue
+        if re.search(r'\b\d{4}\b',txt) or re.search(r'\b[ABC][123]\b',txt): continue
+        for token in re.split(r'\s+',txt):
+            token=token.strip()
+            if jp.fullmatch(token):
+                candidates.append((abs(i-class_idx) if class_idx>=0 else i, i, token))
+    if candidates:
+        candidates.sort(key=lambda z:(z[0],z[1])); name=candidates[0][2]
+    if not name:
+        m=re.search(r'(?:\d{4}\s*/\s*)?([ABC][123])\s+(.+?)(?=\s+\d{2,3}\.\dkg|\s+\d{2,3}\.\d|$)',alltext)
+        if m:
+            if cls is None: cls=m.group(1)
+            name=m.group(2).strip().split()[0]
+
+    wt=None
+    mw=re.search(r'(\d{2,3}\.\d)\s*kg',alltext)
+    if mw: wt=float(mw.group(1))
+    reg=None
+    for txt in texts:
+        mm=re.search(r'(?<!\d)(\d{4})(?!\d)',txt)
+        if mm: reg=int(mm.group(1)); break
+    motor_no=None
+    mmotor=re.search(r'(?:モーター\s*)?(\d{1,2})\s+(?:\d{1,3}\.\d)%',alltext)
+    if mmotor: motor_no=int(mmotor.group(1))
+    return {'boat_no':boat_no,'racer_name':name,'racer_class':cls,
+            'registration_no':reg,'motor_no':motor_no,'weight':wt,'raw_cells':texts}
+
 def parse_roster(html):
     soup=BeautifulSoup(html,'html.parser')
     boats=[]
+    candidate_rows=[]
     for row in soup.find_all('tr'):
         cells=row.find_all(['th','td'])
         if not cells: continue
-        texts=[c.get_text(' ',strip=True) for c in cells]
-        first=texts[0] if texts else ''
-        mboat=re.match(r'^\s*([1-6])(?:\D|$)', first)
-        if not mboat:
-            # Some official table variants put the lane number in a classed cell.
-            mboat=None
-            for txt in texts[:3]:
-                q=re.match(r'^\s*([1-6])(?:\D|$)',txt)
-                if q: mboat=q; break
-        if not mboat: continue
-        boat_no=int(mboat.group(1))
+        texts=[_norm(c.get_text(' ',strip=True)) for c in cells]
         alltext=' '.join(texts)
-        cls=None
-        class_idx=-1
-        for i,txt in enumerate(texts):
-            mc=re.search(r'\b([ABC][123])\b',txt)
-            if mc:
-                cls=mc.group(1); class_idx=i; break
-        name=None
-        # Prefer a cell containing Japanese characters near the class/registration fields.
-        jp=re.compile(r'[一-龥々ぁ-んァ-ヶー]{2,}')
-        candidates=[]
-        for i,txt in enumerate(texts):
-            if i == 0: continue
-            if re.search(r'\b\d{4}\b',txt) or re.search(r'\b[ABC][123]\b',txt): continue
-            for token in re.split(r'\s+',txt):
-                token=token.strip()
-                if jp.fullmatch(token): candidates.append((abs(i-class_idx) if class_idx>=0 else i, i, token))
-        if candidates:
-            candidates.sort(key=lambda z:(z[0],z[1]))
-            name=candidates[0][2]
-        if not name:
-            # Fallback to the historical compact-text parser.
-            m=re.search(r'(?:\d{4}\s*/\s*)?([ABC][123])\s+(.+?)(?=\s+\d{2,3}\.\dkg|\s+\d{2,3}\.\d|$)',alltext)
-            if m:
-                if cls is None: cls=m.group(1)
-                name=m.group(2).strip().split()[0]
-        wt=None
-        mw=re.search(r'(\d{2,3}\.\d)kg',alltext)
-        if mw: wt=float(mw.group(1))
-        reg=None
-        for txt in texts:
-            mm=re.search(r'(?<!\d)(\d{4})(?!\d)',txt)
-            if mm: reg=int(mm.group(1)); break
-        motor_no=None
-        mmotor=re.search(r'(?:モーター\s*)?(\d{1,2})\s+(?:\d{1,3}\.\d)%',alltext)
-        if mmotor: motor_no=int(mmotor.group(1))
-        boats.append({'boat_no':boat_no,'racer_name':name,'racer_class':cls,'registration_no':reg,'motor_no':motor_no,'weight':wt,'raw_cells':texts})
-    uniq={b['boat_no']:b for b in boats}
+        # A racer row has a registration number and class.  Keep these rows as
+        # a reliable ordered fallback when the frame-number cell is rendered in
+        # a variant form (this is what caused 6号艇 to disappear).
+        if re.search(r'(?<!\d)\d{4}(?!\d)',alltext) and re.search(r'\b[ABC][123]\b',alltext):
+            candidate_rows.append(cells)
+        item=_extract_roster_row(cells)
+        if item and item.get('racer_name'):
+            boats.append(item)
+
+    uniq={b['boat_no']:b for b in boats if b.get('boat_no') in range(1,7)}
+    missing=[b for b in range(1,7) if b not in uniq]
+    if missing and len(candidate_rows)>=6:
+        # Official racelist order is frame 1..6. Rebuild missing entries from
+        # the six racer rows, but preserve any already-parsed richer entries.
+        ordered=[]
+        for idx,row in enumerate(candidate_rows[:6],start=1):
+            item=_extract_roster_row(row, fallback_boat=idx)
+            if item: ordered.append(item)
+        for item in ordered:
+            b=item['boat_no']
+            if b not in uniq or not uniq[b].get('racer_name'):
+                uniq[b]=item
+
     return [uniq[k] for k in sorted(uniq)]
 
 def parse_before(html):
@@ -234,12 +269,9 @@ def build_race(date, race_no, fetch_before=True, fetch_result=False):
         try:
             result['result']=parse_result(fetch(urls['result']))
         except Exception as e: result['errors'].append({'stage':'result','error':str(e)})
-    # Names/motor statistics are display/enrichment fields.  The simulator only
-    # requires all six boats plus exhibition time/ST; missing enrichment must not
-    # disable the 10,000-run MC.
-    six_boats=len(result['boats'])==6 and sorted(int(b.get('boat_no',0)) for b in result['boats'])==[1,2,3,4,5,6]
-    required_before=six_boats and all(b.get('exhibition_time') is not None and b.get('exhibition_st') is not None for b in result['boats'])
-    result['status']='ready_for_simulation' if required_before else ('needs_exhibition' if six_boats else 'incomplete')
+    required_names=len(result['boats'])==6 and all(b.get('racer_name') for b in result['boats'])
+    required_before=all(b.get('exhibition_time') is not None and b.get('exhibition_st') is not None for b in result['boats']) if result['boats'] else False
+    result['status']='ready_for_simulation' if required_names and required_before else ('needs_exhibition' if required_names else 'incomplete')
     return result
 
 def main():
