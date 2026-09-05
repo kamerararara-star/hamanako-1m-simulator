@@ -23,9 +23,9 @@ class BoatInput:
     defend:float=0.0
     psychology:float=0.0
     start_quality:float=0.0
-    motor_2rentai_rate:float=0.0   # motor pedigree input; used by MC
-    motor_strength:float=0.0       # normalized motor pedigree effect
-    motor_3rentai_rate:float=0.0   # display/reference only; not used by MC
+    motor_2rentai_rate:float=30.0
+    motor_strength:float=0.0
+    motor_3rentai_rate:float=0.0
 
 @dataclass
 class RaceInput:
@@ -122,7 +122,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
         mean_st += 0.004*(1-runup[b]) + race.wave*0.002
         st[b]=max(0.04,rng.gauss(mean_st,0.018*(1.0-clamp(abs(x.start_quality)/2))))
         # quality: lower ST is better
-        speed[b]=1.0 + x.accel*0.06 + x.stretch*0.08 + 0.045*x.motor_strength + (0.03 if st[b]<0.13 else -0.02) + rng.gauss(0,0.025)
+        speed[b]=1.0 + x.accel*0.06 + x.stretch*0.08 + (0.03 if st[b]<0.13 else -0.02) + rng.gauss(0,0.025)
         lateral[b]=pos[b]
     # ③-1 matching/reaction and ③-2 stretch over run to 1M
     order=sorted(BOATS,key=lambda b:(st[b], courses[b]))
@@ -133,7 +133,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
                 st[b]=(st[b]+st[lead])/2
                 speed[b]+=0.015*bi[b].psychology
     # common movement steps; positions are longitudinal advantage in boat lengths
-    long={b:(0.15*(0.14-st[b])/0.03 + 0.12*bi[b].stretch + 0.10*bi[b].accel + 0.10*bi[b].motor_strength + rng.gauss(0,0.06)) for b in BOATS}
+    long={b:(0.15*(0.14-st[b])/0.03 + 0.12*bi[b].stretch + 0.10*bi[b].accel + rng.gauss(0,0.06)) for b in BOATS}
     # interactions before 1M
     for b in BOATS:
         for c in BOATS:
@@ -172,7 +172,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
     for b in BOATS:
         x=bi[b]; lane=courses[b]
         target=next((c for c in BOATS if courses[c]==lane-1),None)
-        score=0.45+0.55*sigmoid(long[b]*2.2+0.7*x.stretch+0.5*x.accel+0.32*x.motor_strength+0.4*x.attack+0.2*(st.get(target,st[b])-st[b] if target else 0))
+        score=0.45+0.55*sigmoid(long[b]*2.2+0.7*x.stretch+0.5*x.accel+0.4*x.attack+0.2*(st.get(target,st[b])-st[b] if target else 0))
         if target:
             score*=0.75+0.25*(1-bi[target].pressure_resistance)
         attack_score[b]=clamp(score)

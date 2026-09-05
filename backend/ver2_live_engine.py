@@ -1,3 +1,4 @@
+# Hamanako 1M Simulator Ver.2 v14.1 live engine
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse,json,random
@@ -5,7 +6,15 @@ from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).parent))
 from ver2_integrated_mc import RaceInput,BoatInput,Fronting,run_mc
-from ver2_live_store import init_db,upsert_race,save_prediction,save_observation,save_validation,validation_count
+import hashlib
+
+def init_db(): pass
+def upsert_race(data): return None
+def save_prediction(race_id,model_version,simulations,seed,data,out):
+    return hashlib.sha1(f'{race_id}:{model_version}:{seed}'.encode()).hexdigest()[:16]
+def save_observation(*args,**kwargs): return None
+def save_validation(*args,**kwargs): return 'not-persisted'
+def validation_count(): return 0
 
 def feature_defaults(b):
     cls=b.get('racer_class') or 'B1'

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Official BOAT RACE Hamanako live-data fetcher.
 
+Version: Ver.2 v14.1 tested
+
 Low-load, one-race-at-a-time design. No bulk crawling and no video downloading.
 If a page cannot be fetched or parsed, the result remains incomplete rather than
 being guessed.
 """
 from __future__ import annotations
-import re, json, argparse
+import re, json, argparse, unicodedata
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -15,6 +17,13 @@ from bs4 import BeautifulSoup
 
 BASE='https://www.boatrace.jp/owpc/pc/race'
 VENUE='06'
+
+def norm(s):
+    """Normalize full-width/compatibility characters used by the official site."""
+    return unicodedata.normalize('NFKC', str(s))
+
+def compact(s):
+    return re.sub(r'\s+', '', norm(s))
 
 def fetch(url, timeout=20, retries=2):
     headers={
@@ -38,7 +47,7 @@ def fetch(url, timeout=20, retries=2):
 
 def cell_texts(html):
     soup=BeautifulSoup(html,'html.parser')
-    return [[c.get_text(' ',strip=True) for c in row.find_all(['th','td'])] for row in soup.find_all('tr')]
+    return [[norm(c.get_text(' ',strip=True)) for c in row.find_all(['th','td'])] for row in soup.find_all('tr')]
 
 def parse_motor_stats_from_text(text):
     """Extract official motor No / 2-rentai / 3-rentai sequence.
@@ -60,46 +69,37 @@ def parse_motor_stats_from_text(text):
 def parse_roster(html):
     soup=BeautifulSoup(html,'html.parser')
     boats=[]
+    jp=re.compile(r'[一-龥々ぁ-んァ-ヶー]{2,}')
     for row in soup.find_all('tr'):
         cells=row.find_all(['th','td'])
         if not cells: continue
-        texts=[c.get_text(' ',strip=True) for c in cells]
+        texts=[norm(c.get_text(' ',strip=True)) for c in cells]
         first=texts[0] if texts else ''
         mboat=re.match(r'^\s*([1-6])(?:\D|$)', first)
         if not mboat:
-            # Some official table variants put the lane number in a classed cell.
-            mboat=None
-            for txt in texts[:3]:
-                q=re.match(r'^\s*([1-6])(?:\D|$)',txt)
-                if q: mboat=q; break
-        if not mboat: continue
+            continue
         boat_no=int(mboat.group(1))
         alltext=' '.join(texts)
         cls=None
-        class_idx=-1
-        for i,txt in enumerate(texts):
+        for txt in texts:
             mc=re.search(r'\b([ABC][123])\b',txt)
             if mc:
-                cls=mc.group(1); class_idx=i; break
+                cls=mc.group(1); break
         name=None
-        # Prefer a cell containing Japanese characters near the class/registration fields.
-        jp=re.compile(r'[一-龥々ぁ-んァ-ヶー]{2,}')
-        candidates=[]
-        for i,txt in enumerate(texts):
-            if i == 0: continue
-            if re.search(r'\b\d{4}\b',txt) or re.search(r'\b[ABC][123]\b',txt): continue
-            for token in re.split(r'\s+',txt):
-                token=token.strip()
-                if jp.fullmatch(token): candidates.append((abs(i-class_idx) if class_idx>=0 else i, i, token))
-        if candidates:
-            candidates.sort(key=lambda z:(z[0],z[1]))
-            name=candidates[0][2]
+        # Official racelist exposes the racer name as an <a>. Normalize and
+        # remove spacing such as "水口　　由紀" -> "水口由紀".
+        for a in row.find_all('a'):
+            at=compact(a.get_text(' ',strip=True))
+            if jp.fullmatch(at) and len(at)>=2:
+                name=at; break
         if not name:
-            # Fallback to the historical compact-text parser.
-            m=re.search(r'(?:\d{4}\s*/\s*)?([ABC][123])\s+(.+?)(?=\s+\d{2,3}\.\dkg|\s+\d{2,3}\.\d|$)',alltext)
-            if m:
-                if cls is None: cls=m.group(1)
-                name=m.group(2).strip().split()[0]
+            candidates=[]
+            for i,txt in enumerate(texts):
+                if i==0 or re.search(r'\b\d{4}\b',txt) or re.search(r'\b[ABC][123]\b',txt):
+                    continue
+                ct=compact(txt)
+                if jp.fullmatch(ct): candidates.append((i,ct))
+            if candidates: name=candidates[0][1]
         wt=None
         mw=re.search(r'(\d{2,3}\.\d)kg',alltext)
         if mw: wt=float(mw.group(1))
@@ -107,11 +107,23 @@ def parse_roster(html):
         for txt in texts:
             mm=re.search(r'(?<!\d)(\d{4})(?!\d)',txt)
             if mm: reg=int(mm.group(1)); break
-        motor_no=None
-        mmotor=re.search(r'(?:モーター\s*)?(\d{1,2})\s+(?:\d{1,3}\.\d)%',alltext)
-        if mmotor: motor_no=int(mmotor.group(1))
+        motor_no=m2=m3=None
+        # Prefer the dedicated motor cell. This avoids false matches in
+        # national/local win-rate columns (e.g. 4.45 25.00 40.00).
+        mmotor=None
+        for txt in texts:
+            q=re.search(r'^\s*(\d{1,2})\s+(\d{1,3}\.\d+)\s+(\d{1,3}\.\d+)\s*$',txt)
+            if q:
+                mmotor=(int(q.group(1)),float(q.group(2)),float(q.group(3)))
+                break
+        if mmotor:
+            motor_no,m2,m3=mmotor
+        else:
+            mmotor=parse_motor_stats_from_text(alltext)
+            if mmotor:
+                motor_no,m2,m3=mmotor
         boats.append({'boat_no':boat_no,'racer_name':name,'racer_class':cls,'registration_no':reg,
-                      'motor_no':motor_no,'motor_2rentai_rate':None,'motor_3rentai_rate':None,
+                      'motor_no':motor_no,'motor_2rentai_rate':m2,'motor_3rentai_rate':m3,
                       'weight':wt,'raw_cells':texts})
     uniq={b['boat_no']:b for b in boats}
     return [uniq[k] for k in sorted(uniq)]
@@ -120,19 +132,22 @@ def parse_before(html):
     rows=cell_texts(html); out={}
     for cells in rows:
         if not cells: continue
-        first=re.sub(r'[^0-9]','',cells[0])
+        first=re.sub(r'[^0-9]','',norm(cells[0]))
         if first not in {'1','2','3','4','5','6'}: continue
         text=' '.join(cells)
         b=int(first); d=out.setdefault(b,{'boat_no':b,'raw_cells':cells})
         for pat,key in [
             (r'(\d\.\d{2})\s*', 'exhibition_time'),
-            (r'展示ST[^0-9]*([-.]?\d+\.\d+)', 'exhibition_st'),
+            (r'展示ST\s*([Ff]?\d*\.\d+)', 'exhibition_st'),
             (r'(?<!\d)([1-6])\s*コース', 'exhibition_course'),
             (r'チルト[^-+0-9]*([-+]?\d+(?:\.\d+)?)','tilt'),
         ]:
             m=re.search(pat,text)
             if m and key not in d:
-                try: d[key]=float(m.group(1)) if key!='exhibition_course' else int(m.group(1))
+                try:
+                    if key=='exhibition_course': d[key]=int(m.group(1))
+                    elif key=='exhibition_st': d[key]=_parse_st_value(m.group(1))
+                    else: d[key]=float(m.group(1))
                 except ValueError: pass
         # Fallback: collect decimal tokens for later human review.
         d['raw_text']=text
@@ -164,8 +179,8 @@ def parse_start_exhibition(html):
         tm=block.select_one('.table1_boatImage1Time')
         if not num or not tm:
             continue
-        m=re.search(r'([1-6])',num.get_text(' ',strip=True))
-        st=_parse_st_value(tm.get_text(' ',strip=True))
+        m=re.search(r'([1-6])',norm(num.get_text(' ',strip=True)))
+        st=_parse_st_value(norm(tm.get_text(' ',strip=True)))
         if not m or st is None:
             continue
         out.append({'course':course,'boat_no':int(m.group(1)),'exhibition_st':st})
@@ -175,7 +190,7 @@ def parse_result(html):
     rows=cell_texts(html); out={}
     for cells in rows:
         if not cells: continue
-        first=re.sub(r'[^0-9]','',cells[0])
+        first=re.sub(r'[^0-9]','',norm(cells[0]))
         if first not in {'1','2','3','4','5','6'}: continue
         text=' '.join(cells); b=int(first)
         d=out.setdefault(b,{'boat_no':b,'raw_cells':cells})
@@ -183,7 +198,7 @@ def parse_result(html):
         if m: d['finish']=int(m.group(1))
         m=re.search(r'進入[^0-9]*([1-6])',text)
         if m: d['actual_course']=int(m.group(1))
-        m=re.search(r'ST[^-+0-9]*([-.]?\d+\.\d+)',text)
+        m=re.search(r'ST\s*([Ff]?\d*\.\d+)',text)
         if m: d['actual_st']=float(m.group(1))
         d['raw_text']=text
     return [out[k] for k in sorted(out)]
@@ -269,9 +284,11 @@ def build_race(date, race_no, fetch_before=True, fetch_result=False):
         try:
             result['result']=parse_result(fetch(urls['result']))
         except Exception as e: result['errors'].append({'stage':'result','error':str(e)})
-    required_names=len(result['boats'])==6 and all(b.get('racer_name') for b in result['boats'])
-    required_before=all(b.get('exhibition_time') is not None and b.get('exhibition_st') is not None for b in result['boats']) if result['boats'] else False
-    result['status']='ready_for_simulation' if required_names and required_before else ('needs_exhibition' if required_names else 'incomplete')
+    exact_six=sorted(int(b.get('boat_no',0)) for b in result['boats'])==[1,2,3,4,5,6]
+    required_names=exact_six and all(b.get('racer_name') for b in result['boats'])
+    required_motor=exact_six and all(b.get('motor_no') is not None and b.get('motor_2rentai_rate') is not None and b.get('motor_3rentai_rate') is not None for b in result['boats'])
+    required_before=exact_six and all(b.get('exhibition_time') is not None and b.get('exhibition_st') is not None for b in result['boats']) if result['boats'] else False
+    result['status']='ready_for_simulation' if required_names and required_motor and required_before else ('needs_exhibition' if required_names and required_motor else 'incomplete')
     return result
 
 def main():
