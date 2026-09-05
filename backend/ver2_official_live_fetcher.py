@@ -10,37 +10,83 @@ import re, json, argparse
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
+import time
 from bs4 import BeautifulSoup
 
 BASE='https://www.boatrace.jp/owpc/pc/race'
 VENUE='06'
 
-def fetch(url, timeout=15):
-    req=Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; Ver2-Hamanako/2.1)'})
-    with urlopen(req,timeout=timeout) as r:
-        return r.read().decode('utf-8','ignore')
+def fetch(url, timeout=20, retries=2):
+    headers={
+        'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
+        'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language':'ja,en-US;q=0.8,en;q=0.6',
+        'Referer':'https://www.boatrace.jp/'
+    }
+    last=None
+    for attempt in range(retries+1):
+        try:
+            req=Request(url,headers=headers)
+            with urlopen(req,timeout=timeout) as r:
+                body=r.read().decode('utf-8','ignore')
+                if len(body)>1000: return body
+                raise RuntimeError('official page response was unexpectedly short')
+        except Exception as e:
+            last=e
+            if attempt<retries: time.sleep(0.7*(attempt+1))
+    raise last
 
 def cell_texts(html):
     soup=BeautifulSoup(html,'html.parser')
     return [[c.get_text(' ',strip=True) for c in row.find_all(['th','td'])] for row in soup.find_all('tr')]
 
 def parse_roster(html):
-    rows=cell_texts(html); boats=[]
-    for cells in rows:
+    soup=BeautifulSoup(html,'html.parser')
+    boats=[]
+    for row in soup.find_all('tr'):
+        cells=row.find_all(['th','td'])
         if not cells: continue
-        first=re.sub(r'[^0-9]','',cells[0])
-        if first not in {'1','2','3','4','5','6'}: continue
-        alltext=' '.join(cells)
-        m=re.search(r'(\d{4})\s*/\s*([ABC][123])\s+(.+?)(?=\s+[^ ]+\s*/|$)',alltext)
-        name=None; cls=None
-        if m: cls=m.group(2); name=m.group(3).strip()
-        else:
-            m2=re.search(r'/\s*([ABC][123])\s+(.+)',alltext)
-            if m2: cls=m2.group(1); name=m2.group(2).split()[0]
+        texts=[c.get_text(' ',strip=True) for c in cells]
+        first=texts[0] if texts else ''
+        mboat=re.match(r'^\s*([1-6])(?:\D|$)', first)
+        if not mboat:
+            # Some official table variants put the lane number in a classed cell.
+            mboat=None
+            for txt in texts[:3]:
+                q=re.match(r'^\s*([1-6])(?:\D|$)',txt)
+                if q: mboat=q; break
+        if not mboat: continue
+        boat_no=int(mboat.group(1))
+        alltext=' '.join(texts)
+        cls=None
+        class_idx=-1
+        for i,txt in enumerate(texts):
+            mc=re.search(r'\b([ABC][123])\b',txt)
+            if mc:
+                cls=mc.group(1); class_idx=i; break
+        name=None
+        # Prefer a cell containing Japanese characters near the class/registration fields.
+        jp=re.compile(r'[一-龥々ぁ-んァ-ヶー]{2,}')
+        candidates=[]
+        for i,txt in enumerate(texts):
+            if i == 0: continue
+            if re.search(r'\b\d{4}\b',txt) or re.search(r'\b[ABC][123]\b',txt): continue
+            for token in re.split(r'\s+',txt):
+                token=token.strip()
+                if jp.fullmatch(token): candidates.append((abs(i-class_idx) if class_idx>=0 else i, i, token))
+        if candidates:
+            candidates.sort(key=lambda z:(z[0],z[1]))
+            name=candidates[0][2]
+        if not name:
+            # Fallback to the historical compact-text parser.
+            m=re.search(r'(?:\d{4}\s*/\s*)?([ABC][123])\s+(.+?)(?=\s+\d{2,3}\.\dkg|\s+\d{2,3}\.\d|$)',alltext)
+            if m:
+                if cls is None: cls=m.group(1)
+                name=m.group(2).strip().split()[0]
         wt=None
         mw=re.search(r'(\d{2,3}\.\d)kg',alltext)
         if mw: wt=float(mw.group(1))
-        boats.append({'boat_no':int(first),'racer_name':name,'racer_class':cls,'weight':wt,'raw_cells':cells})
+        boats.append({'boat_no':boat_no,'racer_name':name,'racer_class':cls,'weight':wt,'raw_cells':texts})
     uniq={b['boat_no']:b for b in boats}
     return [uniq[k] for k in sorted(uniq)]
 

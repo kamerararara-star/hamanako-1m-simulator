@@ -56,24 +56,16 @@ def resolve_entry(race:RaceInput, rng:random.Random):
     courses={b:base[b-1] for b in BOATS}
     fronting=sorted(race.fronting or [], key=lambda f:f.boat_no)
     notes=[]
-    # User-specified full entry order: each simulation independently decides whether
-    # the intended fronting/entry order succeeds. On failure, use the normal order.
+    # v12: entry is a user-controlled hypothesis, not an AI-randomized event.
+    # If the user changes the six-boat order, use that exact order in every
+    # simulation. Stochasticity belongs to ST / approach / 1M battle, not entry.
     requested=race.entry_order or []
     if requested and sorted(requested)==list(BOATS):
-        changed=any(requested[i]!=base[i] for i in range(6))
-        if changed:
-            # A manually changed full formation is a strong user hypothesis.
-            # Keep it stochastic, but prioritize the requested shape; the
-            # remaining probability represents resistance / non-entry on the day.
-            success_prob=0.85
-            if rng.random() < success_prob:
-                courses={b:i+1 for i,b in enumerate(requested)}
-                notes.append('指定進入成立')
-            else:
-                courses={b:base[b-1] for b in BOATS}
-                notes.append('指定進入不成立→通常進入')
-            entry_pos={b:(courses[b]-1)*1.0 for b in BOATS}
-            return courses, entry_pos, notes
+        courses={b:i+1 for i,b in enumerate(requested)}
+        if any(requested[i]!=base[i] for i in range(6)):
+            notes.append('指定進入を全試行で固定')
+        entry_pos={b:(courses[b]-1)*1.0 for b in BOATS}
+        return courses, entry_pos, notes
     for f in fronting:
         if f.strength<=0: continue
         tr=translate_fronting(f); b=f.boat_no; target=f.target_course
@@ -156,16 +148,24 @@ def simulate_once(race:RaceInput, rng:random.Random):
         lane=courses[b]; x=bi[b]
         if lane==1:
             weights={'逃げ':2.0+x.defend+0.5*x.turn,'差し':0.2,'まくり':0.1+x.attack*0.3,'まくり差し':0.15,'恵まれ':0.02}
-        elif lane in (2,3):
-            weights={'逃げ':0.02,'差し':1.0+0.6*x.attack+0.5*x.stretch,'まくり':0.8+0.9*x.attack+0.4*max(0, long[b]),'まくり差し':0.9+0.8*x.attack+0.4*x.turn,'恵まれ':0.03}
+        elif lane == 2:
+            # 2コースは差しを基本。まくりもあるが、まくり差しは通常の2コース決まり手として扱わない。
+            weights={'逃げ':0.0,'差し':1.25+0.6*x.attack+0.5*x.stretch,'まくり':0.70+0.8*x.attack+0.35*max(0, long[b]),'まくり差し':0.0,'恵まれ':0.03}
+        elif lane == 3:
+            # 3コースはまくり差し・まくりを中心に、差しは補助。
+            weights={'逃げ':0.0,'差し':0.22+0.18*x.attack,'まくり':0.80+0.85*x.attack+0.35*max(0, long[b]),'まくり差し':1.10+0.75*x.attack+0.45*x.turn,'恵まれ':0.03}
         else:
-            weights={'逃げ':0.01,'差し':0.55+0.3*x.attack,'まくり':0.65+0.6*x.attack,'まくり差し':0.65+0.7*x.attack,'恵まれ':0.05}
+            # 4〜6コースは「外からの攻め」を基本。差しは通常の決まり手候補から外し、
+            # 1Mで内側が崩れた特殊ケースは別のイベントとして後段で扱う。
+            weights={'逃げ':0.0,'差し':0.0,'まくり':0.70+0.6*x.attack,'まくり差し':0.80+0.7*x.attack,'恵まれ':0.05}
         # outside/distance reduces immediate attack unless speed advantage is clear
         for k in weights: weights[k]*=math.exp(0.12*long[b])
-        s=sum(max(0.001,v) for v in weights.values()); r=rng.random()*s
+        # Zero-weight patterns are genuinely excluded, not merely made unlikely.
+        positive=[(k,v) for k,v in weights.items() if v>0]
+        s=sum(v for _,v in positive); r=rng.random()*s
         acc=0
-        for k,v in weights.items():
-            acc+=max(0.001,v)
+        for k,v in positive:
+            acc+=v
             if r<=acc: intents[b]=k; break
     # ④ attack execution / reaction. Conservative inner default.
     attack_score={}
@@ -203,6 +203,31 @@ def simulate_once(race:RaceInput, rng:random.Random):
         if long[b1] < -0.28 and rng.random()>clamp(escape_strength):
             collapse.append(b1); long[b1]-=0.20
             decisive='恵まれ'; decisive_boat=next((b for b in BOATS if b not in collapse),None)
+    # ④-2 1M battle geometry: an outer attacker may move inside only as a
+    # consequence of the sampled attack event. Entry itself remains fixed.
+    # This explicitly allows 4 -> 3 (and similar) inside penetration when
+    # the attack is credible; it never changes the pre-race entry order.
+    if decisive_boat is not None:
+        b=decisive_boat; lane=courses[b]; typ=decisive
+        inner=next((c for c in BOATS if courses[c]==lane-1),None)
+        if inner is not None:
+            margin=attack_score[b]-attack_score[inner]
+            penetration=clamp(0.35 + 0.75*margin + 0.25*(bi[b].stretch-bi[inner].stretch))
+            if typ=='まくり':
+                # Sweep can force the adjacent inner boat outward/backward.
+                if rng.random() < penetration:
+                    long[b] += 0.18*penetration
+                    long[inner] -= 0.22*penetration
+            elif typ=='まくり差し':
+                # Split into the inside lane after the inner boat is delayed.
+                if rng.random() < penetration:
+                    long[b] += 0.22*penetration
+                    long[inner] -= 0.16*penetration
+            elif typ=='差し':
+                if rng.random() < penetration:
+                    long[b] += 0.20*penetration
+                    long[inner] -= 0.10*penetration
+
     # ⑤ turn: entry speed/angle/wake, then exit and back middle
     turn_speed={b:speed[b] + 0.16*bi[b].turn + 0.10*bi[b].accel - 0.18*abs(long[b])*0.25 + rng.gauss(0,0.03) for b in BOATS}
     # wake penalty based on nearby prior boat, decays with distance
@@ -250,7 +275,7 @@ def run_mc(race:RaceInput,n:int,seed:int):
       'top3_rate':{str(b):sum(top[(b,r)] for r in (1,2,3))/n for b in BOATS},
       'rank_rates':{str(b):{str(r):top[(b,r)]/n for r in (1,2,3)} for b in BOATS},
       'predicted_st':{str(b):st_sum[b]/n for b in BOATS},
-      'attack_pattern_rate':{str(b):{m:v/n for (bb,m),v in attack_pattern.items() if bb==b} for b in BOATS},
+      'attack_pattern_rate':{str(b):{m:attack_pattern[(b,m)]/n for m in ('逃げ','差し','まくり','まくり差し')} for b in BOATS},
       'representative_back_middle':list(back.most_common(1)[0][0]),
       'representative_back_middle_rate':back.most_common(1)[0][1]/n,
       'back_timing':{str(b):{

@@ -7,20 +7,20 @@ from .ver2_integrated_mc import load_race, run_mc, RaceInput, Fronting, BoatInpu
 from .data_store import init_db, save_race, save_simulation, save_observation, save_validation, stats, active_model
 from .ver2_official_live_fetcher import build_race
 from .ver2_live_engine import run_live, settle
-app=FastAPI(title='浜名湖1M 展開予想AI Ver.2 API',version='2.1')
+app=FastAPI(title='浜名湖1M 展開予想AI Ver.2 API',version='2.2')
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','*').split(','),allow_methods=['*'],allow_headers=['*'])
 init_db()
 class FrontingIn(BaseModel):
     boat_no:int=Field(ge=1,le=6); strength:float=Field(ge=0,le=100); start_aggression:float=Field(ge=0,le=100); depth:float=Field(ge=0,le=100); give_up:float=Field(ge=0,le=100); target_course:int|None=Field(default=None,ge=1,le=6)
 class SimIn(BaseModel):
-    race:dict; simulations:int=Field(default=10000,ge=1000,le=100000); seed:int=20260904; fronting:list[FrontingIn]=[]; save:bool=True
+    race:dict; simulations:int=Field(default=10000,ge=1000,le=100000); seed:int=20260904; fronting:list[FrontingIn]=[]; entry_order:list[int]|None=None; save:bool=True
 class ObservationIn(BaseModel):
     race_id:str; payload:dict
 
 def _race(x):
-    d=dict(x.race); d['fronting']=[f.model_dump() for f in x.fronting]; return load_race_from_dict(d)
+    d=dict(x.race); d['fronting']=[f.model_dump() for f in x.fronting]; d['entry_order']=x.entry_order; return load_race_from_dict(d)
 def load_race_from_dict(d):
-    boats=[BoatInput(**b) for b in d['boats']]; fs=[Fronting(**f) for f in d.get('fronting',[])]; return RaceInput(boats=boats,wind=d.get('wind',0),wave=d.get('wave',0),base_entry=d.get('base_entry'),slow_dash=d.get('slow_dash','auto'),fronting=fs)
+    boats=[BoatInput(**b) for b in d['boats']]; fs=[Fronting(**f) for f in d.get('fronting',[])]; return RaceInput(boats=boats,wind=d.get('wind',0),wave=d.get('wave',0),base_entry=d.get('base_entry'),slow_dash=d.get('slow_dash','auto'),fronting=fs,entry_order=d.get('entry_order'))
 @app.get('/health')
 def health(): return {'status':'ok','engine':'ver2','model':active_model()['version'],'data_calibration':'pending','store':stats()}
 @app.get('/model')
@@ -64,12 +64,12 @@ def live_prepare(date:str, race_no:int):
         raise HTTPException(502,str(e))
 
 class LiveSimIn(BaseModel):
-    race:dict; simulations:int=Field(default=10000,ge=1000,le=100000); seed:int=20260904; fronting:list[FrontingIn]=[]
+    race:dict; simulations:int=Field(default=10000,ge=1000,le=100000); seed:int=20260904; fronting:list[FrontingIn]=[]; entry_order:list[int]|None=None
 
 @app.post('/live/simulate')
 def live_simulate(x:LiveSimIn):
     try:
-        return run_live(x.race,x.simulations,x.seed,[Fronting(**f.model_dump()) for f in x.fronting])
+        return run_live(x.race,x.simulations,x.seed,[Fronting(**f.model_dump()) for f in x.fronting],entry_order=x.entry_order)
     except Exception as e:
         raise HTTPException(400,str(e))
 
