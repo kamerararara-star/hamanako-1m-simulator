@@ -1,10 +1,11 @@
 const $=id=>document.getElementById(id);
 const API='https://hamanako-1m-simulator.onrender.com';
-const UI_VERSION='v13.2';
 const boats=[1,2,3,4,5,6];
 let liveRaceData=null;
 let entryOrder=[1,2,3,4,5,6];
 const HAMANA_BACK={1:[55.2,15.5,7.1],2:[11.9,26.4,18.3],3:[13.6,20.5,20.6],4:[11.3,16.9,18.0],5:[6.9,13.8,20.9],6:[2.1,7.9,16.1]};
+function rng(seed){let x=seed>>>0;return()=>{x^=x<<13;x^=x>>>17;return(x>>>0)/4294967296}}
+function localSim(n=10000,frontBoat=0,seed=20260904){const R=rng(seed),slits={},back={},attack=Object.fromEntries(boats.map(b=>[b,{}])),rank=Object.fromEntries(boats.map(b=>[b,[0,0,0]]));for(let t=0;t<n;t++){let c=entryOrder.slice();let st=boats.map((b,i)=>.145-.008*R()+.003*(i-2));let score=boats.map((b,i)=>.45+.18*R()+.12*(.16-st[i]));let leader=score.slice();let intents={};for(let b of boats){const lane=c[b-1];let m;if(lane===1)m='逃げ';else if(lane===2)m=R()<.55?'差し':(R()<.55?'まくり':'まくり差し');else if(lane===3)m=R()<.45?'まくり差し':(R()<.55?'まくり':'差し');else m=R()<.48?'まくり差し':(R()<.6?'まくり':'差し');intents[b]=m;attack[b][m]=(attack[b][m]||0)+1;leader[b-1]+=(m==='逃げ'?.12:.08)*R();}const order=boats.slice().sort((a,b)=>leader[b-1]-leader[a-1]);let slit=c.join('-');slits[slit]=(slits[slit]||0)+1;order.slice(0,3).forEach((b,r)=>rank[b][r]++);back[order.join('-')]=(back[order.join('-')]||0)+1;}const rep=Object.entries(slits).sort((a,b)=>b[1]-a[1])[0];const brep=Object.entries(back).sort((a,b)=>b[1]-a[1])[0];return{simulations:n,representative_start_slit:rep[0].split('-').map(Number),representative_start_slit_rate:rep[1]/n,representative_back_middle:brep[0].split('-').map(Number),representative_back_middle_rate:brep[1]/n,top3_rate:Object.fromEntries(boats.map(b=>[String(b),rank[b].reduce((a,v)=>a+v,0)/n])),rank_rates:Object.fromEntries(boats.map(b=>[String(b),{'1':rank[b][0]/n,'2':rank[b][1]/n,'3':rank[b][2]/n}])),attack_pattern_rate:Object.fromEntries(boats.map(b=>[String(b),Object.fromEntries(Object.entries(attack[b]).map(([k,v])=>[k,v/n]))]))};}
 function getBoatInfo(no){
   const b=(liveRaceData?.boats||[]).find(x=>+x.boat_no===+no)||{};
   const raw=Array.isArray(b.raw_cells)?b.raw_cells.flatMap(x=>String(x).split(/\s+/)).filter(Boolean):[];
@@ -69,36 +70,9 @@ function render(r){
   $('backDiagram').innerHTML=`<div class="backDiagram"><div class="diagramWrap"><svg viewBox="0 0 620 330" role="img" aria-label="バックストレッチ展開図"><rect class="waterBox" x="20" y="38" width="580" height="240" rx="14"/><text class="axisLabel" x="590" y="25" text-anchor="end">進行方向 ←</text><text class="axisLabel" x="30" y="58">外側</text><text class="axisLabel" x="30" y="270">内側</text><line class="progressLine" x1="565" y1="300" x2="70" y2="300"/><path class="arrowHead" d="M70 300 l14 -7 v14 z"/>${[92,126,160,194,228,262].map(y=>`<line class="routeLine" x1="55" y1="${y}" x2="570" y2="${y}"/>`).join('')}${points}</svg><div class="diagramInfo"><span>代表バック隊形 <b>${order.join(' → ')}</b></span><span>発生率 <b>${br.toFixed(1)}%</b></span></div><div class="diagramLegend">※時間はシミュレーション上のバック基準点への推定到達時間。先頭との差を併記。</div></div></div>`;
   $('backBadge').textContent=`代表 ${order.join('-')} / ${br.toFixed(1)}%`;
 }
-async function run(){const n=10000;if(!liveRaceData){$('liveMsg').textContent='先に公式データを取得してください';return;} $('liveSim').disabled=true;$('liveMsg').textContent='実戦MC計算中…';try{const res=await fetch(API+'/live/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race:liveRaceData,simulations:n,seed:Date.now()%2147483647,fronting:fronting(),entry_order:entryOrder})});if(!res.ok)throw new Error(await res.text());const x=await res.json();const r=x.result||x;render(r);$('simBadge').textContent='10,000 samples / '+UI_VERSION;$('liveMsg').textContent='実戦シミュレーション完了';}catch(e){$('liveSim').disabled=false;$('liveMsg').textContent='計算失敗: '+(e.message||e)+'。結果は表示していません。';}}
-async function livePrepare(){
-  const date=$('liveDate').value.trim(),race=+$('liveRace').value;
-  $('liveMsg').textContent='公式データ取得中…';
-  try{
-    const res=await fetch(`${API}/live/prepare?date=${date}&race_no=${race}`);
-    if(!res.ok)throw new Error(await res.text());
-    liveRaceData=await res.json();
-    const list=liveRaceData.boats||[];
-    const readyEvidence=list.length===6 && list.every(b=>b.exhibition_time!=null && b.exhibition_st!=null);
-    const ok=liveRaceData.status==='ready_for_simulation' || (liveRaceData.status==='needs_exhibition' && readyEvidence) || readyEvidence;
-    $('liveStatus').textContent=(liveRaceData.event_name||'浜名湖')+' / '+race+'R / '+(ok?'取得OK':'要確認');
-    $('liveBoats').innerHTML=list.map(b=>{
-      const info=getBoatInfo(b.boat_no);
-      const name=(b.racer_name||info.name||'選手名未取得');
-      return `<div class="liveBoat"><b>${b.boat_no}号艇</b> ${name} <span>${b.racer_class||info.cls||''}</span><small>展示ST ${b.exhibition_st??'未取得'} / 展示 ${b.exhibition_time??'未取得'} / モーター ${b.motor_no??'—'}${b.motor_2rentai_rate!=null?` / モーター2連対率 ${Number(b.motor_2rentai_rate).toFixed(1)}%`:''}</small></div>`;
-    }).join('')||'<div>艇データなし</div>';
-    renderEntryOrder();
-    $('liveSim').disabled=!ok;
-    $('liveMsg').textContent=ok?'取得完了。③ 実戦10,000回を押せます':'取得は完了しましたが、シミュレーション条件を確認してください';
-  }catch(e){
-    liveRaceData=null;
-    $('liveSim').disabled=true;
-    $('liveMsg').textContent='取得失敗: '+e.message;
-  }
-}
+async function run(){const n=10000;$('liveSim').disabled=true;$('liveMsg').textContent='実戦MC計算中…';try{let r;if(liveRaceData){const res=await fetch(API+'/live/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race:liveRaceData,simulations:n,seed:Date.now()%2147483647,fronting:fronting(),entry_order:entryOrder})});if(!res.ok)throw new Error(await res.text());const x=await res.json();r=x.result||x;}else{const race={race_id:'web-demo',boats:boats.map(b=>({boat_no:b,exhibition_st:.15,stretch:0,accel:0,turn:0,pressure_resistance:0,attack:0,defend:0,psychology:0,start_quality:0})),wind:.2,wave:.1,base_entry:[1,2,3,4,5,6]};const res=await fetch(API+'/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race,simulations:n,seed:Date.now()%2147483647,fronting:fronting(),entry_order:entryOrder})});if(!res.ok)throw new Error(await res.text());r=await res.json();}render(r);$('simBadge').textContent='10,000 samples';$('liveMsg').textContent='実戦シミュレーション完了';}catch(e){render(localSim(n,0,Date.now()));$('liveMsg').textContent='API接続失敗のためローカル再計算';}}
+async function livePrepare(){const date=$('liveDate').value.trim(),race=+$('liveRace').value;$('liveMsg').textContent='公式データ取得中…';try{const res=await fetch(`${API}/live/prepare?date=${date}&race_no=${race}`);if(!res.ok)throw new Error(await res.text());liveRaceData=await res.json();const list=liveRaceData.boats||[];const evidence=list.length===6 && list.every(b=>b.exhibition_time!=null && b.exhibition_st!=null);const ok=liveRaceData.status==='ready_for_simulation'||(liveRaceData.status==='needs_exhibition'&&evidence)||evidence;$('liveStatus').textContent=(liveRaceData.event_name||'浜名湖')+' / '+race+'R / '+(ok?'取得OK':'要確認');$('liveBoats').innerHTML=(liveRaceData.boats||[]).map(b=>`<div class="liveBoat"><b>${b.boat_no}号艇</b> ${b.racer_name||'—'} <span>${b.racer_class||''}</span><small>展示ST ${b.exhibition_st??'未取得'} / 展示 ${b.exhibition_time??'未取得'} / モーター ${b.motor_no??'—'} / 2連対 ${b.motor_2rentai_rate!=null?Number(b.motor_2rentai_rate).toFixed(2)+'%':'—'} / 3連対 ${b.motor_3rentai_rate!=null?Number(b.motor_3rentai_rate).toFixed(2)+'%':'—'}</small></div>`).join('')||'<div>艇データなし</div>';renderEntryOrder();$('liveSim').disabled=!ok;$('liveMsg').textContent=ok?'取得完了':'取得は完了しましたが、シミュレーション条件を確認してください';}catch(e){liveRaceData=null;$('liveSim').disabled=true;$('liveMsg').textContent='取得失敗: '+e.message;}}
 $('resetEntry').addEventListener('click',resetEntry);
-const dateInput=$('liveDate'); if(dateInput){ const d=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()).replace(/-/g,''); if(!/^\d{8}$/.test(dateInput.value)||dateInput.value==='20260904') dateInput.value=d; }
 renderEntryOrder();
-$('simBadge').textContent='公式データ取得待ち / '+UI_VERSION;
-$('liveMsg').textContent='日付とRを選び「公式データ取得」を押してください';
 $('livePrepare').addEventListener('click',livePrepare);$('liveSim').addEventListener('click',run);$('liveDate').addEventListener('change',()=>{liveRaceData=null;$('liveSim').disabled=true;});
-// No local/demo result is rendered. Results appear only after official-data MC succeeds.
+render(localSim());
