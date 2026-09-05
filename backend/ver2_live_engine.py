@@ -6,15 +6,17 @@ from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).parent))
 from ver2_integrated_mc import RaceInput,BoatInput,Fronting,run_mc
-import hashlib
 
-def init_db(): pass
-def upsert_race(data): return None
-def save_prediction(race_id,model_version,simulations,seed,data,out):
-    return hashlib.sha1(f'{race_id}:{model_version}:{seed}'.encode()).hexdigest()[:16]
-def save_observation(*args,**kwargs): return None
-def save_validation(*args,**kwargs): return 'not-persisted'
-def validation_count(): return 0
+# Optional persistence: the public live API does not require the store module.
+try:
+    from ver2_live_store import init_db,upsert_race,save_prediction,save_observation,save_validation,validation_count
+except ImportError:
+    def init_db(): pass
+    def upsert_race(race): return None
+    def save_prediction(*args,**kwargs): return None
+    def save_observation(*args,**kwargs): return None
+    def save_validation(*args,**kwargs): return None
+    def validation_count(): return 0
 
 def feature_defaults(b):
     cls=b.get('racer_class') or 'B1'
@@ -42,14 +44,14 @@ def feature_defaults(b):
         exq=max(-1.0,min(1.0,(6.84-float(ex))*3.0))
     stretch=0.10*exq + 0.04*motor_strength
     accel=0.08*exq + 0.05*motor_strength
-    return BoatInput(boat_no=int(b['boat_no']), exhibition_st=float(est or 0.15),
+    return BoatInput(boat_no=int(b['boat_no']), exhibition_st=float(est if est is not None else 0.15),
                      stretch=stretch, accel=accel, turn=class_base,
                      pressure_resistance=max(0.0,0.05-0.03*motor_strength),
                      attack=max(0,class_base)+0.10*max(0,motor_strength),
                      defend=max(0,class_base)+0.06*max(0,motor_strength),
                      psychology=0.0, start_quality=stq,
                      motor_2rentai_rate=m2, motor_strength=motor_strength,
-                     motor_3rentai_rate=float(b.get('motor_3rentai_rate') or 0.0))
+                     motor_3rentai_rate=float(b.get('motor_3rentai_rate') if b.get('motor_3rentai_rate') is not None else 0.0))
 
 def to_race(data,fronting=None):
     boats=[feature_defaults(b) for b in data['boats']]

@@ -55,7 +55,10 @@ def parse_motor_stats_from_text(text):
     Official racelist rows expose motor data as: motor_no, 2-rentai %,
     3-rentai %, followed by boat No and its rates.
     """
-    m=re.search(r"(?<!\d)(\d{1,2})\s+(\d{1,3}\.\d+)\s+(\d{1,3}\.\d+)\s+(\d{1,2})\s+(\d{1,3}\.\d+)\s+(\d{1,3}\.\d+)(?!\d)", text)
+    # The racelist row contains average-ST and several performance columns
+    # before the motor block.  Skip those decimal fields and anchor on the
+    # motor block immediately before the boat block.
+    m=re.search(r"(?<!\d)(?:\d{1,3}\.\d+\s+){7}(\d{1,2})\s+([0-9]{1,3}(?:\.[0-9]+)?)\s+([0-9]{1,3}(?:\.[0-9]+)?)\s+(\d{1,2})\s+([0-9]{1,3}(?:\.[0-9]+)?)\s+([0-9]{1,3}(?:\.[0-9]+)?)(?!\d)", text)
     if not m:
         return None
     try:
@@ -70,15 +73,35 @@ def parse_roster(html):
     soup=BeautifulSoup(html,'html.parser')
     boats=[]
     jp=re.compile(r'[一-龥々ぁ-んァ-ヶー]{2,}')
+
+    def boat_no_from_row(row, texts):
+        # 1) Normal official row: the first cell is the lane number.
+        for txt in texts[:3]:
+            t=compact(txt)
+            m=re.fullmatch(r'[1-6]',t)
+            if m:
+                return int(t)
+        # 2) Some official HTML variants expose the colored lane number in a
+        # dedicated span/div instead of the first td.
+        for el in row.select('[class*="Number"],[class*="number"]'):
+            t=compact(el.get_text(' ',strip=True))
+            m=re.search(r'(?<!\d)([1-6])(?!\d)',t)
+            if m:
+                return int(m.group(1))
+        # 3) Last-resort: an isolated 1..6 token among the first few cells.
+        for txt in texts[:6]:
+            m=re.fullmatch(r'\s*([1-6])\s*',txt)
+            if m:
+                return int(m.group(1))
+        return None
+
     for row in soup.find_all('tr'):
         cells=row.find_all(['th','td'])
         if not cells: continue
         texts=[norm(c.get_text(' ',strip=True)) for c in cells]
-        first=texts[0] if texts else ''
-        mboat=re.match(r'^\s*([1-6])(?:\D|$)', first)
-        if not mboat:
+        boat_no=boat_no_from_row(row,texts)
+        if boat_no is None:
             continue
-        boat_no=int(mboat.group(1))
         alltext=' '.join(texts)
         cls=None
         for txt in texts:
@@ -86,8 +109,6 @@ def parse_roster(html):
             if mc:
                 cls=mc.group(1); break
         name=None
-        # Official racelist exposes the racer name as an <a>. Normalize and
-        # remove spacing such as "水口　　由紀" -> "水口由紀".
         for a in row.find_all('a'):
             at=compact(a.get_text(' ',strip=True))
             if jp.fullmatch(at) and len(at)>=2:
@@ -100,6 +121,7 @@ def parse_roster(html):
                 ct=compact(txt)
                 if jp.fullmatch(ct): candidates.append((i,ct))
             if candidates: name=candidates[0][1]
+
         wt=None
         mw=re.search(r'(\d{2,3}\.\d)kg',alltext)
         if mw: wt=float(mw.group(1))
@@ -107,21 +129,21 @@ def parse_roster(html):
         for txt in texts:
             mm=re.search(r'(?<!\d)(\d{4})(?!\d)',txt)
             if mm: reg=int(mm.group(1)); break
+
         motor_no=m2=m3=None
-        # Prefer the dedicated motor cell. This avoids false matches in
-        # national/local win-rate columns (e.g. 4.45 25.00 40.00).
-        mmotor=None
+        # A dedicated cell may contain all three motor values.
         for txt in texts:
-            q=re.search(r'^\s*(\d{1,2})\s+(\d{1,3}\.\d+)\s+(\d{1,3}\.\d+)\s*$',txt)
+            q=re.fullmatch(r'\s*(\d{1,2})\s+([0-9]{1,3}(?:\.[0-9]+)?)\s+([0-9]{1,3}(?:\.[0-9]+)?)\s*',txt)
             if q:
-                mmotor=(int(q.group(1)),float(q.group(2)),float(q.group(3)))
-                break
-        if mmotor:
-            motor_no,m2,m3=mmotor
-        else:
+                mn,rr2,rr3=int(q.group(1)),float(q.group(2)),float(q.group(3))
+                if 1 <= mn <= 100 and 0 <= rr2 <= 100 and 0 <= rr3 <= 100:
+                    motor_no,m2,m3=mn,rr2,rr3
+                    break
+        if motor_no is None:
             mmotor=parse_motor_stats_from_text(alltext)
             if mmotor:
                 motor_no,m2,m3=mmotor
+
         boats.append({'boat_no':boat_no,'racer_name':name,'racer_class':cls,'registration_no':reg,
                       'motor_no':motor_no,'motor_2rentai_rate':m2,'motor_3rentai_rate':m3,
                       'weight':wt,'raw_cells':texts})
