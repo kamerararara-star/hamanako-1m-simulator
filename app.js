@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 const API='https://hamanako-1m-simulator.onrender.com';
-const UI_VERSION='v13.1';
+const UI_VERSION='v13.2';
 const boats=[1,2,3,4,5,6];
 let liveRaceData=null;
 let entryOrder=[1,2,3,4,5,6];
@@ -70,7 +70,31 @@ function render(r){
   $('backBadge').textContent=`代表 ${order.join('-')} / ${br.toFixed(1)}%`;
 }
 async function run(){const n=10000;if(!liveRaceData){$('liveMsg').textContent='先に公式データを取得してください';return;} $('liveSim').disabled=true;$('liveMsg').textContent='実戦MC計算中…';try{const res=await fetch(API+'/live/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race:liveRaceData,simulations:n,seed:Date.now()%2147483647,fronting:fronting(),entry_order:entryOrder})});if(!res.ok)throw new Error(await res.text());const x=await res.json();const r=x.result||x;render(r);$('simBadge').textContent='10,000 samples / '+UI_VERSION;$('liveMsg').textContent='実戦シミュレーション完了';}catch(e){$('liveSim').disabled=false;$('liveMsg').textContent='計算失敗: '+(e.message||e)+'。結果は表示していません。';}}
-async function livePrepare(){const date=$('liveDate').value.trim(),race=+$('liveRace').value;$('liveMsg').textContent='公式データ取得中…';try{const res=await fetch(`${API}/live/prepare?date=${date}&race_no=${race}`);if(!res.ok)throw new Error(await res.text());liveRaceData=await res.json();const ok=liveRaceData.status==='ready_for_simulation';$('liveStatus').textContent=(liveRaceData.event_name||'浜名湖')+' / '+race+'R / '+(ok?'取得OK':'要確認');$('liveBoats').innerHTML=(liveRaceData.boats||[]).map(b=>`<div class="liveBoat"><b>${b.boat_no}号艇</b> ${b.racer_name||'—'} <span>${b.racer_class||''}</span><small>展示ST ${b.exhibition_st??'未取得'} / 展示 ${b.exhibition_time??'未取得'} / モーター ${b.motor_no??'—'}${b.motor_2rentai_rate!=null?` / モーター2連対率 ${Number(b.motor_2rentai_rate).toFixed(1)}%`:''}</small></div>`).join('')||'<div>艇データなし</div>';renderEntryOrder();$('liveSim').disabled=!ok;$('liveMsg').textContent=ok?'取得完了':'取得は完了しましたが、シミュレーション条件を確認してください';}catch(e){liveRaceData=null;$('liveSim').disabled=true;$('liveMsg').textContent='取得失敗: '+e.message;}}
+async function livePrepare(){
+  const date=$('liveDate').value.trim(),race=+$('liveRace').value;
+  $('liveMsg').textContent='公式データ取得中…';
+  try{
+    const res=await fetch(`${API}/live/prepare?date=${date}&race_no=${race}`);
+    if(!res.ok)throw new Error(await res.text());
+    liveRaceData=await res.json();
+    const list=liveRaceData.boats||[];
+    const readyEvidence=list.length===6 && list.every(b=>b.exhibition_time!=null && b.exhibition_st!=null);
+    const ok=liveRaceData.status==='ready_for_simulation' || (liveRaceData.status==='needs_exhibition' && readyEvidence) || readyEvidence;
+    $('liveStatus').textContent=(liveRaceData.event_name||'浜名湖')+' / '+race+'R / '+(ok?'取得OK':'要確認');
+    $('liveBoats').innerHTML=list.map(b=>{
+      const info=getBoatInfo(b.boat_no);
+      const name=(b.racer_name||info.name||'選手名未取得');
+      return `<div class="liveBoat"><b>${b.boat_no}号艇</b> ${name} <span>${b.racer_class||info.cls||''}</span><small>展示ST ${b.exhibition_st??'未取得'} / 展示 ${b.exhibition_time??'未取得'} / モーター ${b.motor_no??'—'}${b.motor_2rentai_rate!=null?` / モーター2連対率 ${Number(b.motor_2rentai_rate).toFixed(1)}%`:''}</small></div>`;
+    }).join('')||'<div>艇データなし</div>';
+    renderEntryOrder();
+    $('liveSim').disabled=!ok;
+    $('liveMsg').textContent=ok?'取得完了。③ 実戦10,000回を押せます':'取得は完了しましたが、シミュレーション条件を確認してください';
+  }catch(e){
+    liveRaceData=null;
+    $('liveSim').disabled=true;
+    $('liveMsg').textContent='取得失敗: '+e.message;
+  }
+}
 $('resetEntry').addEventListener('click',resetEntry);
 const dateInput=$('liveDate'); if(dateInput){ const d=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()).replace(/-/g,''); if(!/^\d{8}$/.test(dateInput.value)||dateInput.value==='20260904') dateInput.value=d; }
 renderEntryOrder();
