@@ -23,6 +23,17 @@ class BoatInput:
     defend:float=0.0
     psychology:float=0.0
     start_quality:float=0.0
+    motor_nature:float=0.0
+    motor_form:float=0.0
+    player_attack:float=0.5
+    player_defend:float=0.5
+    player_resist:float=0.5
+    player_retreat:float=0.5
+    player_reaction:float=0.5
+    player_change:float=0.5
+    player_pickup:float=0.5
+    player_inside:float=0.5
+    player_outside:float=0.5
 
 @dataclass
 class RaceInput:
@@ -146,18 +157,28 @@ def simulate_once(race:RaceInput, rng:random.Random):
     intents={}
     for b in BOATS:
         lane=courses[b]; x=bi[b]
+        # Player quirks are conditional behavior priors, not fixed outcomes.
+        pa=x.player_attack; pd=x.player_defend; pr=x.player_resist; po=x.player_outside; pi=x.player_inside
         if lane==1:
-            weights={'逃げ':2.0+x.defend+0.5*x.turn,'差し':0.2,'まくり':0.1+x.attack*0.3,'まくり差し':0.15,'恵まれ':0.02}
+            weights={'逃げ':2.0+0.85*pd+0.45*x.turn+0.35*x.motor_nature,
+                     '差し':0.16+0.15*pa,'まくり':0.08+0.18*pa,'まくり差し':0.10+0.12*pa,'恵まれ':0.02+0.04*x.player_pickup}
         elif lane == 2:
-            # 2コースは差しを基本。まくりもあるが、まくり差しは通常の2コース決まり手として扱わない。
-            weights={'逃げ':0.0,'差し':1.25+0.6*x.attack+0.5*x.stretch,'まくり':0.70+0.8*x.attack+0.35*max(0, long[b]),'まくり差し':0.0,'恵まれ':0.03}
+            # 2コースの「まくり差し」は通常候補から除外。
+            weights={'逃げ':0.0,
+                     '差し':1.15+0.55*pa+0.30*pi+0.45*x.stretch+0.25*x.motor_nature,
+                     'まくり':0.58+0.75*pa+0.25*po+0.35*max(0,long[b]),
+                     'まくり差し':0.0,'恵まれ':0.03+0.05*x.player_pickup}
         elif lane == 3:
-            # 3コースはまくり差し・まくりを中心に、差しは補助。
-            weights={'逃げ':0.0,'差し':0.22+0.18*x.attack,'まくり':0.80+0.85*x.attack+0.35*max(0, long[b]),'まくり差し':1.10+0.75*x.attack+0.45*x.turn,'恵まれ':0.03}
+            weights={'逃げ':0.0,
+                     '差し':0.18+0.18*pa+0.18*pi,
+                     'まくり':0.68+0.82*pa+0.25*po+0.35*max(0,long[b])+0.25*x.motor_nature,
+                     'まくり差し':0.82+0.78*pa+0.45*pi+0.30*x.turn+0.20*x.motor_form,
+                     '恵まれ':0.03+0.05*x.player_pickup}
         else:
-            # 4〜6コースは「外からの攻め」を基本。差しは通常の決まり手候補から外し、
-            # 1Mで内側が崩れた特殊ケースは別のイベントとして後段で扱う。
-            weights={'逃げ':0.0,'差し':0.0,'まくり':0.70+0.6*x.attack,'まくり差し':0.80+0.7*x.attack,'恵まれ':0.05}
+            weights={'逃げ':0.0,'差し':0.0,
+                     'まくり':0.58+0.72*pa+0.30*po+0.25*x.motor_nature,
+                     'まくり差し':0.70+0.65*pa+0.45*pi+0.20*x.motor_form,
+                     '恵まれ':0.04+0.08*x.player_pickup}
         # outside/distance reduces immediate attack unless speed advantage is clear
         for k in weights: weights[k]*=math.exp(0.12*long[b])
         # Zero-weight patterns are genuinely excluded, not merely made unlikely.
@@ -172,7 +193,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
     for b in BOATS:
         x=bi[b]; lane=courses[b]
         target=next((c for c in BOATS if courses[c]==lane-1),None)
-        score=0.45+0.55*sigmoid(long[b]*2.2+0.7*x.stretch+0.5*x.accel+0.4*x.attack+0.2*(st.get(target,st[b])-st[b] if target else 0))
+        score=0.45+0.55*sigmoid(long[b]*2.2+0.7*x.stretch+0.5*x.accel+0.4*x.attack+0.55*(x.player_attack-0.5)+0.35*x.motor_nature+0.25*x.motor_form+0.2*(st.get(target,st[b])-st[b] if target else 0))
         if target:
             score*=0.75+0.25*(1-bi[target].pressure_resistance)
         attack_score[b]=clamp(score)
@@ -187,7 +208,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
         sc,b,typ=candidates[0]; decisive=typ; decisive_boat=b
         # inner resistance can stop it
         inner=next((c for c in BOATS if courses[c]==courses[b]-1),None)
-        if inner and rng.random()<0.32*bi[inner].pressure_resistance:
+        if inner and rng.random()<0.22*bi[inner].pressure_resistance + 0.22*bi[inner].player_resist:
             decisive=None; decisive_boat=None
         elif typ=='まくり':
             for c in BOATS:
@@ -229,7 +250,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
                     long[inner] -= 0.10*penetration
 
     # ⑤ turn: entry speed/angle/wake, then exit and back middle
-    turn_speed={b:speed[b] + 0.16*bi[b].turn + 0.10*bi[b].accel - 0.18*abs(long[b])*0.25 + rng.gauss(0,0.03) for b in BOATS}
+    turn_speed={b:speed[b] + 0.16*bi[b].turn + 0.10*bi[b].accel + 0.035*bi[b].motor_form - 0.18*abs(long[b])*0.25 + rng.gauss(0,0.03) for b in BOATS}
     # wake penalty based on nearby prior boat, decays with distance
     for b in BOATS:
         inner=next((c for c in BOATS if courses[c]==courses[b]-1),None)
@@ -268,7 +289,7 @@ def run_mc(race:RaceInput,n:int,seed:int):
         if len(reps)<3: reps.append(o)
     rep_slit,count=slits.most_common(1)[0]
     return {
-      'simulations':n,'seed':seed,
+      'simulations':n,'seed':seed,'engine':'ver2.1-conditional-player-motor',
       'representative_start_slit':list(rep_slit),'representative_start_slit_rate':count/n,
       'decisive_method_rate':{k:v/n for k,v in decisive.items()},
       'decisive_by_boat':{f'{b}_{m}':v/n for (b,m),v in boat_dec.items()},
@@ -283,7 +304,13 @@ def run_mc(race:RaceInput,n:int,seed:int):
           'gap_to_leader_sec':back_gap_sum[b]/n,
           'sd_sec':max(0.0,(back_time_sq[b]/n-(back_time_sum[b]/n)**2))**0.5
         } for b in BOATS},
-      'fronting_effect_events':dict(notes),
+      'fronting_effect_events':dict(notes),'unique_start_slits':len(slits),'unique_back_orders':len(back),
+      'attack_counts':{str(b):{m:attack_pattern[(b,m)] for m in ('逃げ','差し','まくり','まくり差し')} for b in BOATS},
+      'input_feature_summary':{str(x.boat_no):{
+          'motor_nature':round(x.motor_nature,4),'motor_form':round(x.motor_form,4),
+          'player_attack':round(x.player_attack,4),'player_defend':round(x.player_defend,4),
+          'player_resist':round(x.player_resist,4),'player_inside':round(x.player_inside,4),
+          'player_outside':round(x.player_outside,4)} for x in race.boats},
     }
 
 def load_race(path):

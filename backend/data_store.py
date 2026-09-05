@@ -14,7 +14,7 @@ def conn():
 def init_db():
     with conn() as c:
         c.executescript(SCHEMA)
-        c.execute("INSERT OR IGNORE INTO model_versions(version,status,config,metrics,created_at) VALUES(?,?,?,?,?)",('2.0-structural','active',json.dumps({'calibration':'pending'},ensure_ascii=False),json.dumps({},ensure_ascii=False),time.time()))
+        c.execute("INSERT OR IGNORE INTO model_versions(version,status,config,metrics,created_at) VALUES(?,?,?,?,?)",('2.3-conditional-player-motor','active',json.dumps({'calibration':'pending'},ensure_ascii=False),json.dumps({},ensure_ascii=False),time.time()))
 def save_race(race_id,payload):
     with conn() as c:c.execute('INSERT OR REPLACE INTO races VALUES(?,?,?)',(race_id,json.dumps(payload,ensure_ascii=False),time.time()))
 def save_simulation(race_id,payload):

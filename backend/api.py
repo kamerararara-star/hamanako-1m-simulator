@@ -7,7 +7,7 @@ from .ver2_integrated_mc import load_race, run_mc, RaceInput, Fronting, BoatInpu
 from .data_store import init_db, save_race, save_simulation, save_observation, save_validation, stats, active_model
 from .ver2_official_live_fetcher import build_race
 from .ver2_live_engine import run_live, settle
-app=FastAPI(title='浜名湖1M 展開予想AI Ver.2 API',version='2.2')
+app=FastAPI(title='浜名湖1M 展開予想AI Ver.2 API',version='2.3')
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','*').split(','),allow_methods=['*'],allow_headers=['*'])
 init_db()
 class FrontingIn(BaseModel):

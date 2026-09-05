@@ -86,7 +86,14 @@ def parse_roster(html):
         wt=None
         mw=re.search(r'(\d{2,3}\.\d)kg',alltext)
         if mw: wt=float(mw.group(1))
-        boats.append({'boat_no':boat_no,'racer_name':name,'racer_class':cls,'weight':wt,'raw_cells':texts})
+        reg=None
+        for txt in texts:
+            mm=re.search(r'(?<!\d)(\d{4})(?!\d)',txt)
+            if mm: reg=int(mm.group(1)); break
+        motor_no=None
+        mmotor=re.search(r'(?:モーター\s*)?(\d{1,2})\s+(?:\d{1,3}\.\d)%',alltext)
+        if mmotor: motor_no=int(mmotor.group(1))
+        boats.append({'boat_no':boat_no,'racer_name':name,'racer_class':cls,'registration_no':reg,'motor_no':motor_no,'weight':wt,'raw_cells':texts})
     uniq={b['boat_no']:b for b in boats}
     return [uniq[k] for k in sorted(uniq)]
 
@@ -129,12 +136,30 @@ def parse_result(html):
         d['raw_text']=text
     return [out[k] for k in sorted(out)]
 
+def parse_motor_ranking(html):
+    rows=cell_texts(html); out={}
+    for cells in rows:
+        text=' '.join(cells)
+        mreg=re.search(r'(?<!\d)(\d{4})(?!\d)',text)
+        if not mreg: continue
+        reg=int(mreg.group(1))
+        # Table order: registration, racer, class, motor no, motor 2-rentai, boat no, boat 2-rentai, time.
+        mm=re.search(r'\b([1-6]\d?|\d{1,2})\s+(\d{1,3}\.\d)%',text)
+        if not mm: continue
+        try:
+            motor_no=int(mm.group(1)); motor_rate=float(mm.group(2))
+        except ValueError:
+            continue
+        out[reg]={'motor_no':motor_no,'motor_2rentai_rate':motor_rate}
+    return out
+
 def build_race(date, race_no, fetch_before=True, fetch_result=False):
     rid=f'{date}_06_{int(race_no):02d}'
     urls={
       'racelist':f'{BASE}/racelist?hd={date}&jcd={VENUE}&rno={race_no}',
       'beforeinfo':f'{BASE}/beforeinfo?hd={date}&jcd={VENUE}&rno={race_no}',
       'result':f'{BASE}/result?hd={date}&jcd={VENUE}&rno={race_no}',
+      'rankingmotor':f'{BASE}/rankingmotor?hd={date}&jcd={VENUE}',
     }
     result={'race_id':rid,'race_date':date,'venue':'浜名湖','race_no':int(race_no),
             'source_url':urls['racelist'],'fetched_at':datetime.now(timezone.utc).isoformat(),
@@ -144,6 +169,16 @@ def build_race(date, race_no, fetch_before=True, fetch_result=False):
         result['boats']=roster
     except Exception as e:
         result['errors'].append({'stage':'racelist','error':str(e)})
+    try:
+        ranking=parse_motor_ranking(fetch(urls['rankingmotor']))
+        for b in result['boats']:
+            reg=b.get('registration_no')
+            if reg in ranking:
+                b.update(ranking[reg])
+        result['motor_data_source']=urls['rankingmotor']
+        result['motor_field_count']=len(ranking)
+    except Exception as e:
+        result['errors'].append({'stage':'rankingmotor','error':str(e)})
     if fetch_before:
         try:
             before=parse_before(fetch(urls['beforeinfo']));
