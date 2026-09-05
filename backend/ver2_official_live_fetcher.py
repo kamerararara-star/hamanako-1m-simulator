@@ -119,6 +119,39 @@ def parse_before(html):
         d['raw_text']=text
     return [out[k] for k in sorted(out)]
 
+
+def _parse_st_value(text):
+    """Parse official start-exhibition ST tokens such as .09 or F.03."""
+    t=str(text).strip().upper().replace(' ', '')
+    m=re.search(r'([0-9]*\.[0-9]+)',t)
+    if not m:
+        return None
+    v=float(m.group(1))
+    return -v if t.startswith('F') else v
+
+def parse_start_exhibition(html):
+    """Parse the official start-exhibition grid.
+
+    BOAT RACE's beforeinfo page renders six .table1_boatImage1 blocks in
+    course order. Each block contains the boat number and the ST.  The course
+    is the block order (1..6), while the number span is the actual boat number.
+    This is important when the start exhibition entry differs from frame order.
+    """
+    soup=BeautifulSoup(html,'html.parser')
+    out=[]
+    blocks=soup.select('div.table1_boatImage1')
+    for course,block in enumerate(blocks[:6],start=1):
+        num=block.select_one('.table1_boatImage1Number')
+        tm=block.select_one('.table1_boatImage1Time')
+        if not num or not tm:
+            continue
+        m=re.search(r'([1-6])',num.get_text(' ',strip=True))
+        st=_parse_st_value(tm.get_text(' ',strip=True))
+        if not m or st is None:
+            continue
+        out.append({'course':course,'boat_no':int(m.group(1)),'exhibition_st':st})
+    return out
+
 def parse_result(html):
     rows=cell_texts(html); out={}
     for cells in rows:
@@ -181,9 +214,21 @@ def build_race(date, race_no, fetch_before=True, fetch_result=False):
         result['errors'].append({'stage':'rankingmotor','error':str(e)})
     if fetch_before:
         try:
-            before=parse_before(fetch(urls['beforeinfo']));
+            before_html=fetch(urls['beforeinfo'])
+            before=parse_before(before_html)
             by={x['boat_no']:x for x in before}
             for b in result['boats']: b.update({k:v for k,v in by.get(b['boat_no'],{}).items() if k!='boat_no'})
+            start_ex=parse_start_exhibition(before_html)
+            result['start_exhibition']=start_ex
+            result['start_exhibition_count']=len(start_ex)
+            # Map official start-exhibition ST to the actual boat number.
+            # The row order is the course; the embedded number is the boat.
+            for x in start_ex:
+                for b in result['boats']:
+                    if b.get('boat_no') == x['boat_no']:
+                        b['exhibition_st']=x['exhibition_st']
+                        b['exhibition_course']=x['course']
+                        break
         except Exception as e: result['errors'].append({'stage':'beforeinfo','error':str(e)})
     if fetch_result:
         try:
