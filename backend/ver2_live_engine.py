@@ -6,17 +6,15 @@ from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).parent))
 from ver2_integrated_mc import RaceInput,BoatInput,Fronting,run_mc
+import hashlib
 
-# Optional persistence: the public live API does not require the store module.
-try:
-    from ver2_live_store import init_db,upsert_race,save_prediction,save_observation,save_validation,validation_count
-except ImportError:
-    def init_db(): pass
-    def upsert_race(race): return None
-    def save_prediction(*args,**kwargs): return None
-    def save_observation(*args,**kwargs): return None
-    def save_validation(*args,**kwargs): return None
-    def validation_count(): return 0
+def init_db(): pass
+def upsert_race(data): return None
+def save_prediction(race_id,model_version,simulations,seed,data,out):
+    return hashlib.sha1(f'{race_id}:{model_version}:{seed}'.encode()).hexdigest()[:16]
+def save_observation(*args,**kwargs): return None
+def save_validation(*args,**kwargs): return 'not-persisted'
+def validation_count(): return 0
 
 def feature_defaults(b):
     cls=b.get('racer_class') or 'B1'
@@ -44,19 +42,26 @@ def feature_defaults(b):
         exq=max(-1.0,min(1.0,(6.84-float(ex))*3.0))
     stretch=0.10*exq + 0.04*motor_strength
     accel=0.08*exq + 0.05*motor_strength
-    return BoatInput(boat_no=int(b['boat_no']), exhibition_st=float(est if est is not None else 0.15),
+    return BoatInput(boat_no=int(b['boat_no']), exhibition_st=float(est or 0.15),
                      stretch=stretch, accel=accel, turn=class_base,
                      pressure_resistance=max(0.0,0.05-0.03*motor_strength),
                      attack=max(0,class_base)+0.10*max(0,motor_strength),
                      defend=max(0,class_base)+0.06*max(0,motor_strength),
                      psychology=0.0, start_quality=stq,
                      motor_2rentai_rate=m2, motor_strength=motor_strength,
-                     motor_3rentai_rate=float(b.get('motor_3rentai_rate') if b.get('motor_3rentai_rate') is not None else 0.0))
+                     motor_3rentai_rate=float(b.get('motor_3rentai_rate') or 0.0))
 
 def to_race(data,fronting=None):
     boats=[feature_defaults(b) for b in data['boats']]
-    return RaceInput(boats=boats,wind=float(data.get('wind',0) or 0),wave=float(data.get('wave',0) or 0),
-                     base_entry=data.get('base_entry') or [1,2,3,4,5,6],slow_dash=data.get('slow_dash','auto'),fronting=fronting or [])
+    return RaceInput(
+        boats=boats,
+        wind=float(data.get('wind',0) or 0),
+        wave=float(data.get('wave',0) or 0),
+        base_entry=data.get('base_entry') or [1,2,3,4,5,6],
+        slow_dash=data.get('slow_dash','auto'),
+        fronting=[],
+        entry_order=list(data.get('entry_order') or [1,2,3,4,5,6]),
+    )
 
 def run_live(data, simulations=10000, seed=20260904, fronting=None, model_version='2.1-live-skeleton'):
     boats=data.get('boats') or []
@@ -67,6 +72,10 @@ def run_live(data, simulations=10000, seed=20260904, fronting=None, model_versio
     if missing_names: raise ValueError(f'racer data missing: boats {missing_names}')
     missing=[int(b['boat_no']) for b in boats if b.get('exhibition_time') is None or b.get('exhibition_st') is None]
     if missing: raise ValueError(f'exhibition data missing: boats {missing}')
+    missing_motor=[int(b['boat_no']) for b in boats if b.get('motor_no') is None or b.get('motor_2rentai_rate') is None or b.get('motor_3rentai_rate') is None]
+    if missing_motor: raise ValueError(f'motor data missing: boats {missing_motor}')
+    requested=list(data.get('entry_order') or [1,2,3,4,5,6])
+    if sorted(requested)!=[1,2,3,4,5,6]: raise ValueError('entry_order must contain boats 1..6 exactly once')
     race=to_race(data,fronting); out=run_mc(race,simulations,seed)
     pid=save_prediction(data['race_id'],model_version,simulations,seed,data,out)
     return {'prediction_id':pid,'model_version':model_version,'race_id':data['race_id'],'result':out}

@@ -23,7 +23,7 @@ class BoatInput:
     defend:float=0.0
     psychology:float=0.0
     start_quality:float=0.0
-    motor_2rentai_rate:float=30.0
+    motor_2rentai_rate:float=0.0
     motor_strength:float=0.0
     motor_3rentai_rate:float=0.0
 
@@ -54,59 +54,16 @@ def translate_fronting(f:Fronting):
     }
 
 def resolve_entry(race:RaceInput, rng:random.Random):
-    bi={x.boat_no:x for x in race.boats}
-    base=race.base_entry or list(BOATS)
-    courses={b:base[b-1] for b in BOATS}
-    fronting=sorted(race.fronting or [], key=lambda f:f.boat_no)
-    notes=[]
-    # Entry/fronting is user-controlled only.
-    # The AI must not autonomously change the entry formation. Randomness is
-    # applied later to ST, approach and 1M battle, not to course assignment.
-    requested=race.entry_order or []
-    if requested and sorted(requested)==list(BOATS):
-        courses={b:i+1 for i,b in enumerate(requested)}
-        notes.append('指定進入を固定')
-        entry_pos={b:(courses[b]-1)*1.0 for b in BOATS}
-        return courses, entry_pos, notes
-    for f in fronting:
-        if f.strength<=0: continue
-        tr=translate_fronting(f); b=f.boat_no; target=f.target_course
-        if target is None: target=max(1, min(5, courses[b]-1))
-        inner=[x for x in BOATS if courses[x] < target and x!=b]
-        resistance=sum((1-norm100(next((q.give_up for q in fronting if q.boat_no==x),20)))*0.5 for x in inner)
-        settle=sigmoid((tr['pressure']+0.35*resistance-0.38)*7)
-        if rng.random() < settle:
-            old=courses[b]
-            # shift one lane toward target; stronger/deeper may shift another lane with diminishing probability
-            step=1 if target<old else -1
-            new=old-step*0
-            new=old-1 if target<old else old+1
-            if target<old: new=max(target,new)
-            else: new=min(target,new)
-            if new!=old:
-                # occupant at target lane yields/gets displaced probabilistically
-                occ=next((x for x in BOATS if x!=b and courses[x]==new),None)
-                if occ:
-                    og=norm100(next((q.give_up for q in fronting if q.boat_no==occ),20))
-                    occ_obj=bi[occ]
-                    fail_prob=clamp(0.05+0.20*occ_obj.pressure_resistance+0.10*(1-og)+0.10*race.wave)
-                    if rng.random()<fail_prob:
-                        notes.append(f'{occ}抵抗→{b}前付け不成立寄り')
-                    else:
-                        courses[occ]=old
-                        courses[b]=new
-                        notes.append(f'{b}前付け成立→{occ}抵抗')
-                else: courses[b]=new; notes.append(f'{b}前付け成立')
-        # preserve unique course ordering by repair later
-    # Repair duplicate/missing courses minimally
-    vals=list(courses.values()); missing=[x for x in BOATS if x not in vals]
-    seen=set()
-    for b in BOATS:
-        if courses[b] in seen or courses[b] not in BOATS:
-            courses[b]=missing.pop(0) if missing else b
-        seen.add(courses[b])
-    entry_pos={b:(courses[b]-1)*1.0 for b in BOATS}
-    return courses, entry_pos, notes
+    """進入は完全固定。ランダム性を進入に入れない。"""
+    requested = list(race.entry_order or [])
+    if sorted(requested) == list(BOATS):
+        courses = {boat: i + 1 for i, boat in enumerate(requested)}
+        return courses, {boat: float(courses[boat] - 1) for boat in BOATS}, ['指定進入を固定']
+    base = list(race.base_entry or BOATS)
+    if sorted(base) != list(BOATS):
+        base = list(BOATS)
+    courses = {boat: base[boat - 1] for boat in BOATS}
+    return courses, {boat: float(courses[boat] - 1) for boat in BOATS}, ['通常進入を固定']
 
 def simulate_once(race:RaceInput, rng:random.Random):
     courses,pos,entry_notes=resolve_entry(race,rng)
@@ -134,7 +91,7 @@ def simulate_once(race:RaceInput, rng:random.Random):
                 speed[b]+=0.015*bi[b].psychology
     # common movement steps; positions are longitudinal advantage in boat lengths
     long={b:(0.15*(0.14-st[b])/0.03 + 0.12*bi[b].stretch + 0.10*bi[b].accel + rng.gauss(0,0.06)) for b in BOATS}
-    # interactions before 1M
+    # interactions during the approach to 1M
     for b in BOATS:
         for c in BOATS:
             if b>=c: continue
